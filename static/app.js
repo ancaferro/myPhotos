@@ -1,4 +1,4 @@
-/* MyPhoto frontend: gallery, person filter, rename/merge/delete, analysis progress. */
+/* myPhotos frontend: gallery, person filter, rename/merge/delete, analysis progress. */
 
 const folderInput = document.getElementById("folder-input");
 const analyzeBtn = document.getElementById("analyze-btn");

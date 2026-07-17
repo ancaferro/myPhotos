@@ -1,4 +1,4 @@
-# MyPhoto — Face Catalog
+# myPhotos
 
 A local web app that scans a folder (recursively) for photos, detects faces with
 OpenCV, groups identical faces into persons and lets you browse and filter the
@@ -26,13 +26,13 @@ Prebuilt standalone executables are attached to every
 
 | OS      | File                 |
 |---------|----------------------|
-| Windows | `MyPhoto-Windows.exe`|
-| Linux   | `MyPhoto-Linux`      |
-| macOS   | `MyPhoto-macOS`      |
+| Windows | `myPhotos-Windows.exe`|
+| Linux   | `myPhotos-Linux`      |
+| macOS   | `myPhotos-macOS`      |
 
 Run the file — a local server starts and your browser opens the app
 (http://127.0.0.1:5001). On Linux/macOS make it executable first:
-`chmod +x MyPhoto-Linux && ./MyPhoto-Linux`. On macOS you may need to allow it
+`chmod +x myPhotos-Linux && ./myPhotos-Linux`. On macOS you may need to allow it
 in *System Settings → Privacy & Security* (the binary is not notarized).
 
 ## Features
@@ -93,7 +93,7 @@ Windows, Linux and macOS runners and attaches them to a GitHub release.
 | `main.py`                    | Desktop entry point (server + browser)         |
 | `static/`                    | Frontend (HTML/CSS/JS)                         |
 | `scripts/download_models.py` | Downloads YuNet and SFace ONNX models          |
-| `myphoto.spec`               | PyInstaller build spec                         |
+| `myphotos.spec`               | PyInstaller build spec                         |
 
 ## Storage
 

@@ -1,4 +1,4 @@
-"""MyPhoto — face cataloging web app (Flask + OpenCV + SQLite)."""
+"""myPhotos — face cataloging web app (Flask + OpenCV + SQLite)."""
 
 import io
 import os

@@ -15,14 +15,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact: MyPhoto-Linux
-            binary: dist/MyPhoto
+            artifact: myPhotos-Linux
+            binary: dist/myPhotos
           - os: windows-latest
-            artifact: MyPhoto-Windows.exe
-            binary: dist/MyPhoto.exe
+            artifact: myPhotos-Windows.exe
+            binary: dist/myPhotos.exe
           - os: macos-latest
-            artifact: MyPhoto-macOS
-            binary: dist/MyPhoto
+            artifact: myPhotos-macOS
+            binary: dist/myPhotos
 
     runs-on: ${{ matrix.os }}
 
@@ -41,7 +41,7 @@ jobs:
         run: python scripts/download_models.py
 
       - name: Build executable
-        run: pyinstaller myphoto.spec
+        run: pyinstaller myphotos.spec
 
       - name: Rename artifact
         shell: bash

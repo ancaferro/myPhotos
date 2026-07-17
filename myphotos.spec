@@ -23,7 +23,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='MyPhoto',
+    name='myPhotos',
     debug=False,
     strip=False,
     upx=False,

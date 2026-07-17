@@ -15,5 +15,5 @@ def open_browser():
 
 if __name__ == "__main__":
     threading.Timer(1.0, open_browser).start()
-    print(f"MyPhoto is running on http://{HOST}:{PORT} (Ctrl+C to quit)")
+    print(f"myPhotos is running on http://{HOST}:{PORT} (Ctrl+C to quit)")
     app.run(host=HOST, port=PORT, debug=False)
