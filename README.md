@@ -26,8 +26,11 @@ in *System Settings → Privacy & Security* (the binary is not notarized).
 - Face detection with OpenCV **YuNet**, face embeddings with **SFace**.
 - Faces are clustered into persons (`Persona 1`, `Persona 2`, …): a fast greedy
   pass runs while analysis is in progress, then a final average-linkage
-  re-clustering of all faces; persons can be renamed in the UI and names
-  survive re-analysis.
+  re-clustering of all faces.
+- Persons can be renamed, merged into one another, or deleted (useful for
+  false detections); every edit survives re-analysis.
+- Each person has a stable distinct color used for its face boxes on photos
+  and for its name in the sidebar.
 - Every photo preview shows semi-transparent rectangles over detected faces
   with the person's name below each box; click a photo to see it full-size.
 - Click a person portrait in the right sidebar to filter the gallery to photos

@@ -130,6 +130,10 @@ class Analyzer:
 
             db = get_db()
             persons = self._load_persons(db)
+            # Faces that existed before this run carry assignments from the
+            # previous run and any manual edits (rename/merge); they outrank
+            # this run's greedy guesses when clusters are mapped to persons.
+            confirmed_ids = {r["id"] for r in db.execute("SELECT id FROM faces").fetchall()}
 
             for i, path in enumerate(files):
                 self._set(done=i, current=os.path.basename(path))
@@ -139,7 +143,7 @@ class Analyzer:
                     print(f"[analyzer] skipping {path}: {exc}")
 
             self._set(current="Clustering faces…")
-            self._recluster(db)
+            self._recluster(db, confirmed_ids)
             db.close()
             self._set(status="done", done=len(files), current="")
         except Exception as exc:  # noqa: BLE001
@@ -241,11 +245,15 @@ class Analyzer:
 
     # ----------------------------------------------------------- clustering
 
-    def _recluster(self, db):
+    def _recluster(self, db, confirmed_ids=frozenset()):
         """Re-cluster all faces with average-linkage and remap to existing persons.
 
-        Existing person names survive: each person is matched to the cluster it
-        overlaps most (one-to-one); remaining clusters become new persons.
+        Mapping clusters back to persons uses two passes:
+        - Confirmed faces (existed before this run, i.e. previous results plus
+          manual renames/merges) vote first and MAY map several clusters onto
+          one person — that is what keeps a user's manual merge intact.
+        - Faces assigned by this run's greedy pass vote second, one-to-one
+          only, so a greedy over-merge cannot pull two clusters together.
         """
         rows = db.execute("SELECT id, person_id, embedding FROM faces").fetchall()
         if len(rows) < 2 or len(rows) > MAX_RECLUSTER_FACES:
@@ -258,20 +266,29 @@ class Analyzer:
         )
         clusters = _average_linkage(embeddings, CLUSTER_THRESHOLD)
 
-        # Overlap counts between every cluster and every previous person.
-        overlaps = []  # (count, cluster_index, person_id)
+        # Per-cluster overlap counts with previous persons, split by whether
+        # the vote comes from a confirmed face or a fresh (greedy) one.
+        confirmed_overlaps = []  # (count, cluster_index, person_id)
+        fresh_overlaps = []
         for ci, members in enumerate(clusters):
-            counts = {}
+            confirmed_counts, fresh_counts = {}, {}
             for m in members:
-                if old_person[m] is not None:
-                    counts[old_person[m]] = counts.get(old_person[m], 0) + 1
-            overlaps.extend((n, ci, pid) for pid, n in counts.items())
+                pid = old_person[m]
+                if pid is None:
+                    continue
+                bucket = confirmed_counts if face_ids[m] in confirmed_ids else fresh_counts
+                bucket[pid] = bucket.get(pid, 0) + 1
+            confirmed_overlaps.extend((n, ci, pid) for pid, n in confirmed_counts.items())
+            fresh_overlaps.extend((n, ci, pid) for pid, n in fresh_counts.items())
 
-        # Greedy one-to-one matching, largest overlap first, so a previously
-        # over-merged person cannot swallow two clusters again.
         cluster_person = {}
         used_persons = set()
-        for count, ci, pid in sorted(overlaps, reverse=True):
+        for count, ci, pid in sorted(confirmed_overlaps, reverse=True):
+            if ci in cluster_person:
+                continue
+            cluster_person[ci] = pid
+            used_persons.add(pid)
+        for count, ci, pid in sorted(fresh_overlaps, reverse=True):
             if ci in cluster_person or pid in used_persons:
                 continue
             cluster_person[ci] = pid

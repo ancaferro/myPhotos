@@ -1,4 +1,4 @@
-/* MyPhoto frontend: gallery, person filter, rename, analysis progress. */
+/* MyPhoto frontend: gallery, person filter, rename/merge/delete, analysis progress. */
 
 const folderInput = document.getElementById("folder-input");
 const analyzeBtn = document.getElementById("analyze-btn");
@@ -12,12 +12,16 @@ const personsEmpty = document.getElementById("persons-empty");
 const filterBanner = document.getElementById("filter-banner");
 const filterName = document.getElementById("filter-name");
 const clearFilterBtn = document.getElementById("clear-filter");
+const mergeBanner = document.getElementById("merge-banner");
+const mergeSourceName = document.getElementById("merge-source-name");
+const cancelMergeBtn = document.getElementById("cancel-merge");
 const lightbox = document.getElementById("lightbox");
 const lightboxFrame = document.getElementById("lightbox-frame");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxCaption = document.getElementById("lightbox-caption");
 
 let activePersonId = null;
+let mergeSourceId = null;
 let personsCache = [];
 let pollTimer = null;
 
@@ -26,6 +30,18 @@ async function api(url, options) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
   return data;
+}
+
+/* ---------------------------------------------------------------- colors */
+
+// Golden-angle hue spacing gives every person a stable, distinct color.
+function personHue(id) {
+  return (id * 137.508) % 360;
+}
+
+function personColor(id, alpha = 1) {
+  if (id == null) return `hsla(220, 5%, 63%, ${alpha})`;
+  return `hsla(${personHue(id)}, 75%, 58%, ${alpha})`;
 }
 
 /* ------------------------------------------------------------- rendering */
@@ -38,8 +54,10 @@ function faceBoxesHtml(photo) {
       const w = (f.w / photo.width) * 100;
       const h = (f.h / photo.height) * 100;
       const name = f.person_name || "Unknown";
-      return `<div class="face-box" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%">
-                <div class="face-label">${escapeHtml(name)}</div>
+      const border = personColor(f.person_id);
+      const fill = personColor(f.person_id, 0.24);
+      return `<div class="face-box" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%;border-color:${border};background:${fill}">
+                <div class="face-label" style="background:${personColor(f.person_id, 0.85)}">${escapeHtml(name)}</div>
               </div>`;
     })
     .join("");
@@ -84,22 +102,35 @@ async function loadPersons() {
     .map(
       (p) => `
       <div class="person ${p.id === activePersonId ? "active" : ""}" data-person-id="${p.id}">
-        <img class="person-avatar" src="/api/face/${p.portrait_face_id}" alt="">
+        <img class="person-avatar" src="/api/face/${p.portrait_face_id}" alt=""
+             style="border-color:${personColor(p.id)}">
         <div class="person-meta">
-          <div class="person-name" title="Click ✎ to rename">${escapeHtml(p.name)}</div>
+          <div class="person-name" style="color:${personColor(p.id)}">${escapeHtml(p.name)}</div>
           <div class="person-count">${p.photo_count} photo${p.photo_count === 1 ? "" : "s"}</div>
         </div>
-        <button class="person-edit" title="Rename">✎</button>
+        <div class="person-actions">
+          <button class="person-btn rename-btn" title="Rename">✎</button>
+          <button class="person-btn merge-btn" title="Merge into another person">⇆</button>
+          <button class="person-btn delete-btn" title="Delete person and its face boxes">🗑</button>
+        </div>
       </div>`
     )
     .join("");
 
   personsBox.querySelectorAll(".person").forEach((el) => {
     const id = Number(el.dataset.personId);
-    el.addEventListener("click", () => togglePersonFilter(id));
-    el.querySelector(".person-edit").addEventListener("click", (e) => {
+    el.addEventListener("click", () => onPersonClick(id));
+    el.querySelector(".rename-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       startRename(el, id);
+    });
+    el.querySelector(".merge-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      startMerge(id);
+    });
+    el.querySelector(".delete-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deletePerson(id);
     });
   });
 
@@ -112,7 +143,11 @@ function updateFilterBanner() {
   if (person) filterName.textContent = person.name;
 }
 
-function togglePersonFilter(personId) {
+function onPersonClick(personId) {
+  if (mergeSourceId != null) {
+    finishMerge(personId);
+    return;
+  }
   activePersonId = activePersonId === personId ? null : personId;
   loadPersons();
   loadPhotos();
@@ -123,6 +158,11 @@ clearFilterBtn.addEventListener("click", () => {
   loadPersons();
   loadPhotos();
 });
+
+async function refreshAll() {
+  await loadPersons();
+  await loadPhotos();
+}
 
 /* ---------------------------------------------------------------- rename */
 
@@ -152,8 +192,7 @@ function startRename(personEl, personId) {
         alert(err.message);
       }
     }
-    await loadPersons();
-    await loadPhotos(); // labels on photos use the person name
+    await refreshAll(); // labels on photos use the person name
   };
 
   input.addEventListener("keydown", (e) => {
@@ -163,6 +202,66 @@ function startRename(personEl, personId) {
   input.addEventListener("blur", () => finish(true));
   input.addEventListener("click", (e) => e.stopPropagation());
 }
+
+/* ---------------------------------------------------------- merge/delete */
+
+function startMerge(personId) {
+  const person = personsCache.find((p) => p.id === personId);
+  if (!person) return;
+  mergeSourceId = personId;
+  mergeSourceName.textContent = person.name;
+  mergeBanner.classList.remove("hidden");
+  personsBox.classList.add("merge-mode");
+}
+
+function cancelMerge() {
+  mergeSourceId = null;
+  mergeBanner.classList.add("hidden");
+  personsBox.classList.remove("merge-mode");
+}
+
+async function finishMerge(targetId) {
+  const source = personsCache.find((p) => p.id === mergeSourceId);
+  const target = personsCache.find((p) => p.id === targetId);
+  if (!source || !target || targetId === mergeSourceId) {
+    cancelMerge();
+    return;
+  }
+  if (!confirm(`Merge "${source.name}" into "${target.name}"?\nAll faces of "${source.name}" will become "${target.name}".`)) {
+    cancelMerge();
+    return;
+  }
+  try {
+    await api(`/api/persons/${mergeSourceId}/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_id: targetId }),
+    });
+    if (activePersonId === mergeSourceId) activePersonId = targetId;
+  } catch (err) {
+    alert(err.message);
+  }
+  cancelMerge();
+  await refreshAll();
+}
+
+async function deletePerson(personId) {
+  const person = personsCache.find((p) => p.id === personId);
+  if (!person) return;
+  if (!confirm(`Delete "${person.name}"?\nIts ${person.face_count} face box(es) will be removed from the photos. The photos themselves are kept.`)) {
+    return;
+  }
+  try {
+    await api(`/api/persons/${personId}`, { method: "DELETE" });
+    if (activePersonId === personId) activePersonId = null;
+    if (mergeSourceId === personId) cancelMerge();
+  } catch (err) {
+    alert(err.message);
+  }
+  await refreshAll();
+}
+
+cancelMergeBtn.addEventListener("click", cancelMerge);
 
 /* -------------------------------------------------------------- analysis */
 
@@ -203,8 +302,7 @@ async function pollProgress() {
     pollTimer = null;
     setAnalyzing(false);
     if (p.status === "error") alert(`Analysis failed: ${p.error}`);
-    await loadPersons();
-    await loadPhotos();
+    await refreshAll();
   }
 }
 
@@ -220,7 +318,10 @@ function openLightbox(photo) {
 
 lightbox.addEventListener("click", () => lightbox.classList.add("hidden"));
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") lightbox.classList.add("hidden");
+  if (e.key === "Escape") {
+    lightbox.classList.add("hidden");
+    cancelMerge();
+  }
 });
 
 /* ------------------------------------------------------------------ init */
@@ -235,6 +336,5 @@ document.addEventListener("keydown", (e) => {
     pollTimer = setInterval(pollProgress, 400);
   }
 
-  await loadPersons();
-  await loadPhotos();
+  await refreshAll();
 })();

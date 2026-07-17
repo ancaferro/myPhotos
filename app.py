@@ -123,6 +123,40 @@ def rename_person(person_id):
     return jsonify({"ok": True, "name": name})
 
 
+@app.delete("/api/persons/<int:person_id>")
+def delete_person(person_id):
+    """Delete a person together with its face boxes (e.g. false detections)."""
+    db = get_db()
+    exists = db.execute("SELECT 1 FROM persons WHERE id = ?", (person_id,)).fetchone()
+    if exists is None:
+        db.close()
+        abort(404)
+    db.execute("DELETE FROM faces WHERE person_id = ?", (person_id,))
+    db.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+    db.commit()
+    db.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/persons/<int:person_id>/merge")
+def merge_person(person_id):
+    """Move all faces of person_id into target_id and delete person_id."""
+    target_id = (request.get_json(silent=True) or {}).get("target_id")
+    if not isinstance(target_id, int) or target_id == person_id:
+        return jsonify({"error": "Valid target_id is required"}), 400
+    db = get_db()
+    source = db.execute("SELECT 1 FROM persons WHERE id = ?", (person_id,)).fetchone()
+    target = db.execute("SELECT 1 FROM persons WHERE id = ?", (target_id,)).fetchone()
+    if source is None or target is None:
+        db.close()
+        abort(404)
+    db.execute("UPDATE faces SET person_id = ? WHERE person_id = ?", (target_id, person_id))
+    db.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+    db.commit()
+    db.close()
+    return jsonify({"ok": True})
+
+
 def _load_photo(photo_id):
     db = get_db()
     row = db.execute("SELECT * FROM photos WHERE id = ?", (photo_id,)).fetchone()

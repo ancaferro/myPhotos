@@ -119,6 +119,17 @@ body {
 }
 .filter-banner b { color: var(--text); }
 
+.merge-banner {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: rgba(79, 140, 255, 0.12);
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.merge-banner b { color: var(--text); }
+
 .link-btn {
   margin-left: 8px;
   border: none;
@@ -166,7 +177,7 @@ body {
 
 .face-box {
   position: absolute;
-  background: var(--box-fill);
+  background: var(--box-fill); /* per-person color set inline */
   border: 2px solid var(--box-border);
   border-radius: 3px;
   pointer-events: none;
@@ -180,10 +191,11 @@ body {
   margin-top: 2px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(15, 17, 21, 0.75);
+  background: rgba(15, 17, 21, 0.75); /* per-person color set inline */
   color: #fff;
   font-size: 11px;
   font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   white-space: nowrap;
   max-width: 160px;
   overflow: hidden;
@@ -272,16 +284,29 @@ body {
 
 .person-count { font-size: 11.5px; color: var(--muted); }
 
-.person-edit {
+.person-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  visibility: hidden;
+}
+.person:hover .person-actions,
+.person.active .person-actions { visibility: visible; }
+
+.person-btn {
   border: none;
   background: none;
   color: var(--muted);
   cursor: pointer;
   font-size: 13px;
-  padding: 4px;
-  flex-shrink: 0;
+  padding: 3px;
+  border-radius: 5px;
 }
-.person-edit:hover { color: var(--text); }
+.person-btn:hover { color: var(--text); background: var(--panel); }
+.delete-btn:hover { color: #ff7a7a; }
+
+/* Merge mode: highlight that persons are now merge targets. */
+.persons.merge-mode .person { outline: 1px dashed var(--accent); outline-offset: -1px; }
 
 .persons-empty { font-size: 13px; color: var(--muted); }
 
