@@ -4,6 +4,21 @@ A local web app that scans a folder (recursively) for photos, detects faces with
 OpenCV, groups identical faces into persons and lets you browse and filter the
 photo library by person.
 
+## Screenshots
+
+Gallery with per-person colored face boxes and the people sidebar:
+
+![Gallery](screenshots/gallery.png)
+
+Gallery filtered to one person (rename / merge / delete buttons on the selected
+row):
+
+![Filtered by person](screenshots/filter.png)
+
+Full-size view of a photo with every detected face outlined and named:
+
+![Photo view](screenshots/lightbox.png)
+
 ## Download
 
 Prebuilt standalone executables are attached to every
@@ -36,6 +51,8 @@ in *System Settings → Privacy & Security* (the binary is not notarized).
 - Click a person portrait in the right sidebar to filter the gallery to photos
   containing that person (photos with several people match any of their filters).
 - Progress bar while analysis is running.
+- Deep links: `/?person=<id>` opens the gallery pre-filtered,
+  `/?photo=<id>` opens a photo full-size.
 - Results (photos, faces, persons) are persisted in SQLite; unchanged photos
   are not re-analyzed on subsequent runs.
 

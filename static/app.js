@@ -69,9 +69,12 @@ function escapeHtml(s) {
   }[c]));
 }
 
+let lastPhotos = [];
+
 async function loadPhotos() {
   const q = activePersonId != null ? `?person_id=${activePersonId}` : "";
   const photos = await api(`/api/photos${q}`);
+  lastPhotos = photos;
 
   gallery.innerHTML = photos
     .map(
@@ -336,5 +339,14 @@ document.addEventListener("keydown", (e) => {
     pollTimer = setInterval(pollProgress, 400);
   }
 
+  // Deep links: ?person=<id> pre-filters the gallery, ?photo=<id> opens the lightbox.
+  const params = new URLSearchParams(location.search);
+  if (params.get("person")) activePersonId = Number(params.get("person"));
+
   await refreshAll();
+
+  if (params.get("photo")) {
+    const photo = lastPhotos.find((ph) => ph.id === Number(params.get("photo")));
+    if (photo) openLightbox(photo);
+  }
 })();
