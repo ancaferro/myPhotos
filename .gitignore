@@ -16,3 +16,7 @@ dist/
 
 # Local tooling
 .claude/
+
+# make start artifacts
+.myphotos.pid
+server.log
