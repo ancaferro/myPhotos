@@ -4,6 +4,13 @@ A local web app that scans a folder (recursively) for photos, detects faces with
 OpenCV, groups identical faces into persons and lets you browse and filter the
 photo library by person.
 
+> [!IMPORTANT]
+> **Vote: keep the web version or switch to a native desktop GUI?**
+> A full PySide6 port (same features, no browser and no local server) is ready
+> to ship. Help decide the project's direction in
+> [discussion #1](https://github.com/ancaferro/myPhotos/discussions/1) — react
+> with 👍 to the option you prefer.
+
 ## Screenshots
 
 Gallery with per-person colored face boxes and the people sidebar:
