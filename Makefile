@@ -11,7 +11,15 @@ start:
 		echo "myPhotos is already running (PID $$(cat $(PID_FILE))) — $(URL)"; \
 	else \
 		nohup $(PYTHON) app.py > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE); \
-		echo "myPhotos started on $(URL) (PID $$(cat $(PID_FILE)), log: $(LOG_FILE))"; \
+		sleep 1; \
+		if kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
+			echo "myPhotos started on $(URL) (PID $$(cat $(PID_FILE)), log: $(LOG_FILE))"; \
+		else \
+			rm -f $(PID_FILE); \
+			echo "myPhotos failed to start — $(LOG_FILE) says:"; \
+			tail -5 $(LOG_FILE); \
+			exit 1; \
+		fi; \
 	fi
 
 stop:
