@@ -1,15 +1,8 @@
 # myPhotos
 
-A local web app that scans a folder (recursively) for photos, detects faces with
-OpenCV, groups identical faces into persons and lets you browse and filter the
-photo library by person.
-
-> [!IMPORTANT]
-> **Vote: keep the web version or switch to a native desktop GUI?**
-> A full PySide6 port (same features, no browser and no local server) is ready
-> to ship. Help decide the project's direction in
-> [discussion #1](https://github.com/ancaferro/myPhotos/discussions/1) — react
-> with 👍 to the option you prefer.
+A desktop app (PySide6) that scans a folder (recursively) for photos, detects
+faces with OpenCV, groups identical faces into persons and lets you browse and
+filter the photo library by person.
 
 ## Screenshots
 
@@ -37,10 +30,10 @@ Prebuilt standalone executables are attached to every
 | Linux   | `myPhotos-Linux`      |
 | macOS   | `myPhotos-macOS`      |
 
-Run the file — a local server starts and your browser opens the app
-(http://127.0.0.1:5001). On Linux/macOS make it executable first:
-`chmod +x myPhotos-Linux && ./myPhotos-Linux`. On macOS you may need to allow it
-in *System Settings → Privacy & Security* (the binary is not notarized).
+Run the file — the app window opens directly. On Linux/macOS make it
+executable first: `chmod +x myPhotos-Linux && ./myPhotos-Linux`. On macOS you
+may need to allow it in *System Settings → Privacy & Security* (the binary is
+not notarized).
 
 ## Features
 
@@ -55,11 +48,14 @@ in *System Settings → Privacy & Security* (the binary is not notarized).
   and for its name in the sidebar.
 - Every photo preview shows semi-transparent rectangles over detected faces
   with the person's name below each box; click a photo to see it full-size.
+- The full-size viewer zooms with the mouse wheel (around the cursor), pans a
+  zoomed photo by dragging, and switches photos with the side arrows or ←/→;
+  ✕, Esc or a click on the background closes it.
 - Click a person portrait in the right sidebar to filter the gallery to photos
-  containing that person (photos with several people match any of their filters).
+  containing that person.
+- Preview aspect (vertical 3:4 by default, or 4:3) and face-box visibility are
+  toggleable and remembered between launches.
 - Progress bar while analysis is running.
-- Deep links: `/?person=<id>` opens the gallery pre-filtered,
-  `/?photo=<id>` opens a photo full-size.
 - Results (photos, faces, persons) are persisted in SQLite; unchanged photos
   are not re-analyzed on subsequent runs.
 
@@ -70,10 +66,10 @@ Requires Python 3.10+.
 ```bash
 pip install -r requirements.txt
 python scripts/download_models.py   # fetches ONNX models from the OpenCV Zoo
-python3 app.py
+python3 main.py
 ```
 
-Open http://127.0.0.1:5001, check the folder path and press **Analyze**.
+Check the folder path in the top bar and press **Analyze**.
 
 ## Build executables
 
@@ -82,7 +78,7 @@ Executables are built with PyInstaller — locally:
 ```bash
 pip install pyinstaller
 python scripts/download_models.py
-pyinstaller myphoto.spec
+pyinstaller myphotos.spec
 ```
 
 or by CI: pushing a `v*` tag triggers the
@@ -93,16 +89,17 @@ Windows, Linux and macOS runners and attaches them to a GitHub release.
 
 | Path                         | Purpose                                        |
 |------------------------------|------------------------------------------------|
-| `app.py`                     | Flask server and HTTP API                      |
+| `main.py`                    | Desktop entry point (QApplication + theme)     |
+| `gui/`                       | PySide6 UI: window, gallery, people, lightbox  |
 | `analyzer.py`                | Folder scanning, face detection and clustering |
 | `database.py`                | SQLite schema and connection helpers           |
 | `paths.py`                   | Path resolution (source vs frozen bundle)      |
-| `main.py`                    | Desktop entry point (server + browser)         |
-| `static/`                    | Frontend (HTML/CSS/JS)                         |
 | `scripts/download_models.py` | Downloads YuNet and SFace ONNX models          |
-| `myphotos.spec`               | PyInstaller build spec                         |
+| `myphotos.spec`              | PyInstaller build spec                         |
 
 ## Storage
 
 - Running from source: `myphoto.db` next to the code.
 - Running a packaged executable: `~/.myphoto/myphoto.db`.
+- View settings (preview aspect, face-box visibility) are stored with Qt
+  `QSettings` under the `myPhotos` organization.
