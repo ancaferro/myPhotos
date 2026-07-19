@@ -1,5 +1,6 @@
 """Recursive photo scanning, face detection (YuNet) and face clustering (SFace)."""
 
+import logging
 import os
 import threading
 
@@ -8,6 +9,8 @@ import numpy as np
 
 from database import get_db
 from paths import resource_dir
+
+log = logging.getLogger(__name__)
 
 MODELS_DIR = os.path.join(resource_dir(), "models")
 DETECTOR_MODEL = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx")
@@ -140,13 +143,14 @@ class Analyzer:
                 try:
                     self._process_photo(db, detector, recognizer, persons, path)
                 except Exception as exc:  # noqa: BLE001 - skip unreadable files
-                    print(f"[analyzer] skipping {path}: {exc}")
+                    log.warning("skipping %s: %s", path, exc)
 
             self._set(current="Clustering faces…")
             self._recluster(db, confirmed_ids)
             db.close()
             self._set(status="done", done=len(files), current="")
         except Exception as exc:  # noqa: BLE001
+            log.exception("analysis of %s failed", folder)
             self._set(status="error", error=str(exc))
 
     def _load_persons(self, db):

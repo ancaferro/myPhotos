@@ -113,6 +113,7 @@ Windows, Linux and macOS runners and attaches them to a GitHub release.
 ## Storage
 
 - Running from source: `myphoto.db` next to the code.
-- Running a packaged executable: `~/.myphoto/myphoto.db`.
+- Running a packaged executable: `~/.myphoto/myphoto.db`, with a rotating
+  `~/.myphoto/myphotos.log` for debugging (windowed builds have no console).
 - View settings (preview aspect, face-box visibility) are stored with Qt
   `QSettings` under the `myPhotos` organization.

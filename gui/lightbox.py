@@ -5,6 +5,8 @@ photo, the side zones (or Left/Right arrow keys) switch photos, the ✕ button,
 Esc or a click on the empty background closes the overlay.
 """
 
+import logging
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QDialog, QToolButton
@@ -12,6 +14,8 @@ from PySide6.QtWidgets import QDialog, QToolButton
 from gui.facepaint import draw_face_boxes
 from gui.thumbs import _read_image
 from gui.theme import MUTED, TEXT
+
+log = logging.getLogger(__name__)
 
 CAPTION_H = 40
 MAX_ZOOM = 12.0
@@ -55,6 +59,8 @@ class Lightbox(QDialog):
     def _load(self, index):
         self._index = index
         image = _read_image(self._photos[index]["path"])
+        if image.isNull():
+            log.warning("could not read %s", self._photos[index]["path"])
         self._pixmap = None if image.isNull() else QPixmap.fromImage(image)
         self._zoom = 1.0
         self._pan = QPointF(0, 0)
@@ -200,6 +206,14 @@ class Lightbox(QDialog):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.fillRect(self.rect(), QColor(10, 11, 14, 235))
         if self._pixmap is None:
+            painter.setPen(QColor(MUTED))
+            font = painter.font()
+            font.setPixelSize(15)
+            painter.setFont(font)
+            path = self._photo["path"] if self._photos else ""
+            painter.drawText(
+                self.rect(), Qt.AlignCenter, f"Could not load image\n{path}"
+            )
             return
 
         dst = self._draw_rect()
