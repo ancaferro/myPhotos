@@ -40,13 +40,13 @@ CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);
 """
 
 
-def get_db():
+def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
-def init_db():
+def init_db() -> None:
     with get_db() as conn:
         conn.executescript(SCHEMA)

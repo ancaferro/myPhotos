@@ -2,7 +2,9 @@
 
 import logging
 import os
+import sqlite3
 import threading
+from collections.abc import Set
 
 import cv2
 import numpy as np
@@ -33,7 +35,7 @@ MIN_FACE_SIZE = 24
 MAX_EMBEDDINGS_PER_PERSON = 32
 
 
-def scan_image_files(folder):
+def scan_image_files(folder: str) -> list[str]:
     """Return sorted list of image file paths under folder, recursively."""
     files = []
     for root, _dirs, names in os.walk(folder):
@@ -44,12 +46,12 @@ def scan_image_files(folder):
     return files
 
 
-def _normalize(vec):
+def _normalize(vec: np.ndarray) -> np.ndarray:
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else vec
 
 
-def _average_linkage(embeddings, threshold):
+def _average_linkage(embeddings: np.ndarray, threshold: float) -> list[list[int]]:
     """Agglomerative average-linkage clustering on cosine similarities.
 
     Uses Lance-Williams updates on a full similarity matrix: O(n^2) memory,
@@ -89,10 +91,10 @@ def _average_linkage(embeddings, threshold):
 class Analyzer:
     """Runs analysis in a background thread and exposes progress state."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._thread = None
-        self.progress = {
+        self._thread: threading.Thread | None = None
+        self.progress: dict[str, object] = {
             "status": "idle",  # idle | running | done | error
             "total": 0,
             "done": 0,
@@ -100,18 +102,18 @@ class Analyzer:
             "error": "",
         }
 
-    def _set(self, **kwargs):
+    def _set(self, **kwargs: object) -> None:
         with self._lock:
             self.progress.update(kwargs)
 
-    def get_progress(self):
+    def get_progress(self) -> dict[str, object]:
         with self._lock:
             return dict(self.progress)
 
-    def is_running(self):
+    def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, folder):
+    def start(self, folder: str) -> bool:
         if self.is_running():
             return False
         self._set(status="running", total=0, done=0, current="", error="")
@@ -121,7 +123,7 @@ class Analyzer:
 
     # ---------------------------------------------------------------- core
 
-    def _run(self, folder):
+    def _run(self, folder: str) -> None:
         try:
             detector = cv2.FaceDetectorYN.create(
                 DETECTOR_MODEL, "", (320, 320), DETECTION_SCORE_THRESHOLD
@@ -153,9 +155,9 @@ class Analyzer:
             log.exception("analysis of %s failed", folder)
             self._set(status="error", error=str(exc))
 
-    def _load_persons(self, db):
+    def _load_persons(self, db: sqlite3.Connection) -> dict[int, list[np.ndarray]]:
         """Load stored embeddings grouped by person for incremental clustering."""
-        persons = {}
+        persons: dict[int, list[np.ndarray]] = {}
         rows = db.execute(
             "SELECT person_id, embedding FROM faces WHERE person_id IS NOT NULL"
         ).fetchall()
@@ -166,7 +168,14 @@ class Analyzer:
             del embeddings[MAX_EMBEDDINGS_PER_PERSON:]
         return persons
 
-    def _process_photo(self, db, detector, recognizer, persons, path):
+    def _process_photo(
+        self,
+        db: sqlite3.Connection,
+        detector: cv2.FaceDetectorYN,
+        recognizer: cv2.FaceRecognizerSF,
+        persons: dict[int, list[np.ndarray]],
+        path: str,
+    ) -> None:
         mtime = os.path.getmtime(path)
         existing = db.execute("SELECT id, mtime FROM photos WHERE path = ?", (path,)).fetchone()
         if existing is not None:
@@ -220,7 +229,12 @@ class Analyzer:
                 )
         db.commit()
 
-    def _assign_person(self, db, persons, embedding):
+    def _assign_person(
+        self,
+        db: sqlite3.Connection,
+        persons: dict[int, list[np.ndarray]],
+        embedding: np.ndarray,
+    ) -> int:
         """Greedy mean-linkage match against known persons (live preview only).
 
         The final grouping is decided by _recluster() at the end of the run.
@@ -241,7 +255,7 @@ class Analyzer:
         return person_id
 
     @staticmethod
-    def _create_person(db):
+    def _create_person(db: sqlite3.Connection) -> int:
         cur = db.execute("INSERT INTO persons (name) VALUES ('')")
         person_id = cur.lastrowid
         db.execute("UPDATE persons SET name = ? WHERE id = ?", (f"Persona {person_id}", person_id))
@@ -249,7 +263,9 @@ class Analyzer:
 
     # ----------------------------------------------------------- clustering
 
-    def _recluster(self, db, confirmed_ids=frozenset()):
+    def _recluster(
+        self, db: sqlite3.Connection, confirmed_ids: Set[int] = frozenset()
+    ) -> None:
         """Re-cluster all faces with average-linkage and remap to existing persons.
 
         Mapping clusters back to persons uses two passes:
@@ -314,7 +330,7 @@ class Analyzer:
         db.commit()
 
     @staticmethod
-    def _read_with_pillow(path):
+    def _read_with_pillow(path: str) -> np.ndarray | None:
         """Fallback reader for formats cv2.imread cannot open."""
         try:
             from PIL import Image

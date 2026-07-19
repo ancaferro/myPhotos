@@ -3,7 +3,13 @@
 import numpy as np
 
 import analyzer
-from analyzer import Analyzer, _average_linkage, _normalize, scan_image_files
+from analyzer import (
+    GREEDY_THRESHOLD,
+    Analyzer,
+    _average_linkage,
+    _normalize,
+    scan_image_files,
+)
 
 
 def _unit(dim, axis, noise_seed=None):
@@ -47,6 +53,64 @@ class TestAverageLinkage:
         embeddings = np.stack([_unit(4, i) for i in range(4)])
         clusters = _average_linkage(embeddings, threshold=0.3)
         assert len(clusters) == 4
+
+
+def _with_similarity(cos):
+    """Unit vector whose dot product with the axis-0 unit vector equals cos."""
+    vec = np.zeros(8, dtype=np.float32)
+    vec[0] = cos
+    vec[1] = np.sqrt(1.0 - cos * cos)
+    return vec
+
+
+class TestAssignPerson:
+    def test_close_embedding_joins_existing_person(self, db):
+        conn = db.get_db()
+        a = Analyzer()
+        persons = {}
+        first = a._assign_person(conn, persons, _unit(8, 0))
+        second = a._assign_person(conn, persons, _with_similarity(0.9))
+        assert second == first
+        assert len(persons[first]) == 2
+        conn.close()
+
+    def test_distant_embedding_creates_new_person(self, db):
+        conn = db.get_db()
+        a = Analyzer()
+        persons = {}
+        first = a._assign_person(conn, persons, _unit(8, 0))
+        second = a._assign_person(conn, persons, _unit(8, 1))
+        assert second != first
+        assert set(persons) == {first, second}
+        names = {r["name"] for r in conn.execute("SELECT name FROM persons")}
+        assert names == {f"Persona {first}", f"Persona {second}"}
+        conn.close()
+
+    def test_similarity_threshold_boundary(self, db):
+        conn = db.get_db()
+        a = Analyzer()
+        persons = {}
+        first = a._assign_person(conn, persons, _unit(8, 0))
+        joined = a._assign_person(
+            conn, persons, _with_similarity(GREEDY_THRESHOLD + 0.02)
+        )
+        assert joined == first
+        split = a._assign_person(
+            conn, {first: [_unit(8, 0)]}, _with_similarity(GREEDY_THRESHOLD - 0.02)
+        )
+        assert split != first
+        conn.close()
+
+    def test_embeddings_per_person_are_capped(self, db, monkeypatch):
+        monkeypatch.setattr(analyzer, "MAX_EMBEDDINGS_PER_PERSON", 3)
+        conn = db.get_db()
+        a = Analyzer()
+        persons = {}
+        first = a._assign_person(conn, persons, _unit(8, 0))
+        for seed in range(1, 6):
+            assert a._assign_person(conn, persons, _unit(8, 0, seed)) == first
+        assert len(persons[first]) == 3  # capped, membership unchanged
+        conn.close()
 
 
 def _seed_faces(db, groups):

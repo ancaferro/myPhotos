@@ -8,7 +8,9 @@ THUMB_MAX = {"34": (450, 600), "43": (600, 450)}
 PORTRAIT_SIZE = 128
 
 
-def compute_crop(width, height, faces, aspect):
+def compute_crop(
+    width: int, height: int, faces: list[dict], aspect: float
+) -> dict[str, int]:
     """Fixed-aspect crop window centered on the faces' bounding box (or the middle).
 
     Returned in original-image coordinates; the same window is used to build
@@ -33,7 +35,7 @@ def compute_crop(width, height, faces, aspect):
     return {"x": x, "y": y, "w": crop_w, "h": crop_h}
 
 
-def list_photos(person_id=None, aspect_key="34"):
+def list_photos(person_id: int | None = None, aspect_key: str = "34") -> list[dict]:
     db = get_db()
     if person_id is None:
         rows = db.execute("SELECT * FROM photos ORDER BY filename").fetchall()
@@ -79,7 +81,7 @@ def list_photos(person_id=None, aspect_key="34"):
     ]
 
 
-def list_persons():
+def list_persons() -> list[dict]:
     db = get_db()
     rows = db.execute(
         "SELECT pe.id, pe.name,"
@@ -94,14 +96,14 @@ def list_persons():
     return [dict(r) for r in rows]
 
 
-def rename_person(person_id, name):
+def rename_person(person_id: int, name: str) -> None:
     db = get_db()
     db.execute("UPDATE persons SET name = ? WHERE id = ?", (name, person_id))
     db.commit()
     db.close()
 
 
-def delete_person(person_id):
+def delete_person(person_id: int) -> None:
     """Delete a person together with its face boxes (e.g. false detections)."""
     db = get_db()
     db.execute("DELETE FROM faces WHERE person_id = ?", (person_id,))
@@ -110,7 +112,7 @@ def delete_person(person_id):
     db.close()
 
 
-def merge_person(source_id, target_id):
+def merge_person(source_id: int, target_id: int) -> None:
     """Move all faces of source_id into target_id and delete source_id."""
     db = get_db()
     db.execute("UPDATE faces SET person_id = ? WHERE person_id = ?", (target_id, source_id))
@@ -119,7 +121,7 @@ def merge_person(source_id, target_id):
     db.close()
 
 
-def face_portrait_source(face_id):
+def face_portrait_source(face_id: int) -> dict | None:
     """Photo path and face rect for a person's avatar, or None if missing."""
     db = get_db()
     row = db.execute(

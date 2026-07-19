@@ -4,18 +4,18 @@ import os
 import sys
 
 
-def is_frozen():
-    return getattr(sys, "frozen", False)
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
 
 
-def resource_dir():
+def resource_dir() -> str:
     """Directory with bundled read-only resources (static/, models/)."""
     if is_frozen():
         return sys._MEIPASS  # noqa: SLF001 - PyInstaller runtime attribute
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def data_dir():
+def data_dir() -> str:
     """Writable directory for the SQLite database."""
     if is_frozen():
         path = os.path.join(os.path.expanduser("~"), ".myphoto")
@@ -24,7 +24,7 @@ def data_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def default_photos_dir():
+def default_photos_dir() -> str:
     local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "photos")
     if not is_frozen() and os.path.isdir(local):
         return local
