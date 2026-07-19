@@ -19,4 +19,4 @@ dist/
 
 # make start artifacts
 .myphotos.pid
-server.log
+myphotos.log

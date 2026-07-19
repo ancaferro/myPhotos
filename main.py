@@ -1,19 +1,32 @@
-"""Desktop entry point: start the server and open the browser."""
+"""myPhotos — face cataloging desktop app (PySide6 + OpenCV + SQLite)."""
 
-import threading
-import webbrowser
+import sys
 
-from app import app
+from PySide6.QtWidgets import QApplication
 
-HOST = "127.0.0.1"
-PORT = 5001
+from database import init_db
+from gui.theme import STYLESHEET, app_icon, make_palette
+from gui.window import MainWindow
+
+__version__ = "1.0.1"
 
 
-def open_browser():
-    webbrowser.open(f"http://{HOST}:{PORT}")
+def main():
+    init_db()
+    app = QApplication(sys.argv)
+    app.setOrganizationName("myPhotos")
+    app.setApplicationName("myPhotos")
+    app.setApplicationVersion(__version__)
+    app.setStyle("Fusion")
+    app.setPalette(make_palette())
+    app.setStyleSheet(STYLESHEET)
+    app.setWindowIcon(app_icon())
+
+    window = MainWindow()
+    window.resize(1280, 860)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    threading.Timer(1.0, open_browser).start()
-    print(f"myPhotos is running on http://{HOST}:{PORT} (Ctrl+C to quit)")
-    app.run(host=HOST, port=PORT, debug=False)
+    main()

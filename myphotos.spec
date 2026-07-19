@@ -1,11 +1,10 @@
-# PyInstaller spec: single-file executable with bundled static/ and models/.
+# PyInstaller spec: single-file windowed executable with bundled models/.
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[
-        ('static', 'static'),
         ('models', 'models'),
     ],
     hiddenimports=[],
@@ -27,5 +26,6 @@ exe = EXE(
     debug=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
+    icon='assets/icon.ico',
 )

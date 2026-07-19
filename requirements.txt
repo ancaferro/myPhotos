@@ -1,4 +1,4 @@
-flask>=3.0
 numpy>=1.26
 opencv-python-headless>=4.10
 pillow>=10.0
+PySide6>=6.6
