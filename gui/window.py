@@ -1,5 +1,6 @@
 """Main window: top bar, analysis progress, gallery, people sidebar."""
 
+import logging
 import os
 
 from PySide6.QtCore import QSettings, Qt, QTimer
@@ -31,6 +32,8 @@ from gui.people import PeoplePanel
 from gui.theme import app_icon, aspect_icon, eye_icon
 from gui.thumbs import ImageLoader
 from paths import default_photos_dir
+
+log = logging.getLogger(__name__)
 
 POLL_INTERVAL_MS = 400
 SIDEBAR_W = 280
@@ -209,8 +212,17 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- refreshing
 
+    def _report_error(self, title, exc):
+        """Log a failed operation and tell the user instead of crashing."""
+        log.exception("%s failed", title)
+        QMessageBox.critical(self, title, f"{title} failed:\n{exc}")
+
     def refresh_persons(self):
-        persons = data.list_persons()
+        try:
+            persons = data.list_persons()
+        except Exception as exc:  # noqa: BLE001 - e.g. a corrupted database
+            self._report_error("Loading people", exc)
+            return
         if self.active_person_id is not None and not any(
             p["id"] == self.active_person_id for p in persons
         ):
@@ -219,7 +231,11 @@ class MainWindow(QMainWindow):
         self._update_filter_banner()
 
     def refresh_photos(self):
-        photos = data.list_photos(self.active_person_id, self.aspect_key)
+        try:
+            photos = data.list_photos(self.active_person_id, self.aspect_key)
+        except Exception as exc:  # noqa: BLE001 - e.g. a corrupted database
+            self._report_error("Loading photos", exc)
+            return
         self.gallery.set_photos(photos)
         self.stack.setCurrentIndex(0 if photos else 1)
 
@@ -253,7 +269,11 @@ class MainWindow(QMainWindow):
         )
         name = name.strip()
         if ok and name and name != person["name"]:
-            data.rename_person(person["id"], name)
+            try:
+                data.rename_person(person["id"], name)
+            except Exception as exc:  # noqa: BLE001
+                self._report_error("Rename person", exc)
+                return
             self.refresh_all()  # labels on photos use the person name
 
     def _merge_person(self, person):
@@ -273,7 +293,11 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
-        data.merge_person(person["id"], target["id"])
+        try:
+            data.merge_person(person["id"], target["id"])
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Merge person", exc)
+            return
         if self.active_person_id == person["id"]:
             self.active_person_id = target["id"]
         self.refresh_all()
@@ -288,7 +312,11 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
-        data.delete_person(person["id"])
+        try:
+            data.delete_person(person["id"])
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Delete person", exc)
+            return
         if self.active_person_id == person["id"]:
             self.active_person_id = None
         self.refresh_all()

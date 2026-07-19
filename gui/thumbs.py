@@ -5,10 +5,14 @@ orientation the analyzer stored coordinates in) and hand QImages to the GUI
 thread through signals; pixmaps are created and cached there.
 """
 
+import logging
+
 from PySide6.QtCore import QObject, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 
 from gui.data import PORTRAIT_SIZE, THUMB_MAX, face_portrait_source
+
+log = logging.getLogger(__name__)
 
 
 def _read_image(path):
@@ -23,7 +27,10 @@ class _Job(QRunnable):
         self._fn = fn
 
     def run(self):
-        self._fn()
+        try:
+            self._fn()
+        except Exception:  # noqa: BLE001 - keep the thread pool alive
+            log.exception("image loader job failed")
 
 
 class ImageLoader(QObject):
@@ -57,7 +64,9 @@ class ImageLoader(QObject):
 
     def _load_thumb(self, key, path, crop):
         image = _read_image(path)
-        if not image.isNull():
+        if image.isNull():
+            log.warning("could not read thumbnail source %s", path)
+        else:
             image = image.copy(QRect(crop["x"], crop["y"], crop["w"], crop["h"]))
             image = image.scaled(
                 QSize(*THUMB_MAX[key[1]]), Qt.KeepAspectRatio, Qt.SmoothTransformation
@@ -84,8 +93,14 @@ class ImageLoader(QObject):
         return pixmap
 
     def _load_portrait(self, face_id):
-        row = face_portrait_source(face_id)
+        try:
+            row = face_portrait_source(face_id)
+        except Exception:  # noqa: BLE001 - a broken DB must not kill the worker
+            log.exception("loading portrait source for face %s failed", face_id)
+            row = None
         image = _read_image(row["path"]) if row else QImage()
+        if image.isNull() and row is not None:
+            log.warning("could not read portrait source %s", row["path"])
         if not image.isNull():
             # Square crop around the face with a 30% margin, clamped to the image.
             cx, cy = row["x"] + row["w"] / 2, row["y"] + row["h"] / 2
