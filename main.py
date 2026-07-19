@@ -12,7 +12,7 @@ from gui.theme import STYLESHEET, app_icon, make_palette
 from gui.window import MainWindow
 from paths import data_dir, is_frozen
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 log = logging.getLogger(__name__)
 
