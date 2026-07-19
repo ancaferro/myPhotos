@@ -71,6 +71,18 @@ python3 main.py
 
 Check the folder path in the top bar and press **Analyze**.
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite runs offscreen (no display needed) on synthetic images and a temp
+database: crop math, data queries, person edits, clustering/recluster logic,
+the responsive grid and the lightbox interactions. CI runs it on every push
+and pull request via the [tests workflow](.github/workflows/tests.yml).
+
 ## Build executables
 
 Executables are built with PyInstaller — locally:
@@ -95,6 +107,7 @@ Windows, Linux and macOS runners and attaches them to a GitHub release.
 | `database.py`                | SQLite schema and connection helpers           |
 | `paths.py`                   | Path resolution (source vs frozen bundle)      |
 | `scripts/download_models.py` | Downloads YuNet and SFace ONNX models          |
+| `tests/`                     | Pytest suite (offscreen, synthetic data)       |
 | `myphotos.spec`              | PyInstaller build spec                         |
 
 ## Storage
