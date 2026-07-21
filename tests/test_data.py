@@ -48,12 +48,21 @@ class TestQueries:
         assert all("crop" in p for p in photos)
 
     def test_list_photos_filtered_by_person(self, seeded):
-        alice_photos = data.list_photos(person_id=seeded["alice"])
+        alice_photos = data.list_photos(person_ids=[seeded["alice"]])
         assert [p["filename"] for p in alice_photos] == ["img1.jpg", "img2.jpg"]
         assert all(
             any(f["person_id"] == seeded["alice"] for f in p["faces"])
             for p in alice_photos
         )
+
+    def test_multi_person_filter_is_and(self, seeded):
+        both = data.list_photos(person_ids=[seeded["alice"], seeded["bob"]])
+        assert [p["filename"] for p in both] == ["img2.jpg"]  # only shared photo
+
+    def test_sort_by_capture_date(self, seeded):
+        photos = data.list_photos(order="date")
+        assert [p["filename"] for p in photos] == ["img2.jpg", "img3.jpg", "img1.jpg"]
+        assert [p["taken_at"] for p in photos] == [1000.0, 2000.0, 3000.0]
 
     def test_list_persons_counts_and_order(self, seeded):
         persons = data.list_persons()

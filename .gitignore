@@ -1,6 +1,10 @@
 # Local data
 myphoto.db
 photos/
+thumbs_cache/
+
+# Local planning
+ROADMAP.md
 
 # Models (downloaded by scripts/download_models.py)
 models/*.onnx

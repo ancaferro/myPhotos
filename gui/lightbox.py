@@ -6,6 +6,7 @@ Esc or a click on the empty background closes the overlay.
 """
 
 import logging
+from datetime import datetime
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
@@ -229,6 +230,9 @@ class Lightbox(QDialog):
         painter.setFont(font)
         caption = QRectF(16, self.height() - CAPTION_H, self.width() - 32, CAPTION_H)
         text = self._photo["path"]
+        taken = self._photo.get("taken_at")
+        if taken:
+            text += f" · {datetime.fromtimestamp(taken):%Y-%m-%d %H:%M}"
         if len(self._photos) > 1:
             text = f"{self._index + 1} / {len(self._photos)}   {text}"
         painter.drawText(caption, Qt.AlignCenter, text)

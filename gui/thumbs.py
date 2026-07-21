@@ -6,11 +6,13 @@ thread through signals; pixmaps are created and cached there.
 """
 
 import logging
+import os
 
 from PySide6.QtCore import QObject, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 
 from gui.data import PORTRAIT_SIZE, THUMB_MAX, face_portrait_source
+from paths import data_dir
 
 log = logging.getLogger(__name__)
 
@@ -47,8 +49,20 @@ class ImageLoader(QObject):
         self._thumbs = {}  # (photo_id, aspect_key) -> QPixmap
         self._portraits = {}  # face_id -> QPixmap
         self._pending = set()
+        self._cache_dir = os.path.join(data_dir(), "thumbs_cache")
+        os.makedirs(self._cache_dir, exist_ok=True)
         self._thumb_done.connect(self._on_thumb_done)
         self._portrait_done.connect(self._on_portrait_done)
+
+    def _cache_path(self, photo, aspect_key):
+        """Disk-cache location; the key invalidates on file change (mtime),
+        aspect switch and crop change (faces edited or deleted)."""
+        crop = photo["crop"]
+        key = (
+            f"{photo['id']}-{int(photo.get('mtime') or 0)}-{aspect_key}"
+            f"-{crop['x']}x{crop['y']}x{crop['w']}x{crop['h']}"
+        )
+        return os.path.join(self._cache_dir, key + ".jpg")
 
     # ------------------------------------------------------------- thumbnails
 
@@ -59,18 +73,25 @@ class ImageLoader(QObject):
         if pixmap is None and key not in self._pending:
             self._pending.add(key)
             path, crop = photo["path"], dict(photo["crop"])
-            self._pool.start(_Job(lambda: self._load_thumb(key, path, crop)))
+            cache = self._cache_path(photo, aspect_key)
+            self._pool.start(_Job(lambda: self._load_thumb(key, path, crop, cache)))
         return pixmap
 
-    def _load_thumb(self, key, path, crop):
-        image = _read_image(path)
+    def _load_thumb(self, key, path, crop, cache):
+        image = QImage(cache) if os.path.exists(cache) else QImage()
         if image.isNull():
-            log.warning("could not read thumbnail source %s", path)
-        else:
-            image = image.copy(QRect(crop["x"], crop["y"], crop["w"], crop["h"]))
-            image = image.scaled(
-                QSize(*THUMB_MAX[key[1]]), Qt.KeepAspectRatio, Qt.SmoothTransformation
-            )
+            image = _read_image(path)
+            if image.isNull():
+                log.warning("could not read thumbnail source %s", path)
+            else:
+                image = image.copy(QRect(crop["x"], crop["y"], crop["w"], crop["h"]))
+                image = image.scaled(
+                    QSize(*THUMB_MAX[key[1]]),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                if not image.save(cache, "JPG", 85):
+                    log.warning("could not write thumbnail cache %s", cache)
         self._thumb_done.emit(key[0], key[1], image)
 
     def _on_thumb_done(self, photo_id, aspect_key, image):

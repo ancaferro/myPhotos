@@ -35,16 +35,30 @@ def compute_crop(
     return {"x": x, "y": y, "w": crop_w, "h": crop_h}
 
 
-def list_photos(person_id: int | None = None, aspect_key: str = "34") -> list[dict]:
+def list_photos(
+    person_ids: list[int] | None = None,
+    aspect_key: str = "34",
+    order: str = "name",
+) -> list[dict]:
+    """Photos with faces and crops; person_ids filters to photos where ALL
+    of the given persons appear (AND). order is "name" or "date" (EXIF
+    capture time, falling back to file mtime)."""
+    order_sql = (
+        "ORDER BY COALESCE(taken_at, mtime), filename"
+        if order == "date"
+        else "ORDER BY filename"
+    )
     db = get_db()
-    if person_id is None:
-        rows = db.execute("SELECT * FROM photos ORDER BY filename").fetchall()
+    if not person_ids:
+        rows = db.execute(f"SELECT * FROM photos {order_sql}").fetchall()
     else:
+        marks = ",".join("?" * len(person_ids))
         rows = db.execute(
-            "SELECT DISTINCT p.* FROM photos p"
-            " JOIN faces f ON f.photo_id = p.id"
-            " WHERE f.person_id = ? ORDER BY p.filename",
-            (person_id,),
+            f"SELECT p.* FROM photos p"
+            f" JOIN faces f ON f.photo_id = p.id"
+            f" WHERE f.person_id IN ({marks})"
+            f" GROUP BY p.id HAVING COUNT(DISTINCT f.person_id) = ? {order_sql}",
+            (*person_ids, len(person_ids)),
         ).fetchall()
 
     face_rows = db.execute(
@@ -71,6 +85,8 @@ def list_photos(person_id: int | None = None, aspect_key: str = "34") -> list[di
             "path": p["path"],
             "width": p["width"],
             "height": p["height"],
+            "mtime": p["mtime"],
+            "taken_at": p["taken_at"],
             "faces": faces_by_photo.get(p["id"], []),
             "crop": compute_crop(
                 p["width"], p["height"], faces_by_photo.get(p["id"], []),
