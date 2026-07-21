@@ -63,8 +63,8 @@ class TestWindow:
 
     def test_people_rebuild_does_not_duplicate_rows(self, qapp, window):
         persons = window.people.persons()
-        window.people.rebuild(persons, persons[0]["id"])
-        window.people.rebuild(persons, None)
+        window.people.rebuild(persons, {persons[0]["id"]})
+        window.people.rebuild(persons, set())
         qapp.processEvents()
         assert len(window.people._rows) == len(persons)
 

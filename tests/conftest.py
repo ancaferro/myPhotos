@@ -21,6 +21,14 @@ def db(tmp_path, monkeypatch):
     return database
 
 
+@pytest.fixture(autouse=True)
+def _thumb_cache_in_tmp(tmp_path, monkeypatch):
+    """Keep the disk thumbnail cache out of the repository during tests."""
+    import gui.thumbs
+
+    monkeypatch.setattr(gui.thumbs, "data_dir", lambda: str(tmp_path))
+
+
 def _embedding(seed, dim=8):
     """Deterministic unit vector; nearby seeds in the same hundred are close."""
     base = np.zeros(dim, dtype=np.float32)
@@ -37,15 +45,17 @@ def seeded(db, tmp_path):
     Returns a dict with photo/person ids for assertions.
     """
     conn = db.get_db()
-    sizes = [(400, 300), (300, 400), (600, 600)]
+    # taken_at makes the capture-date order (img2, img3, img1) differ from
+    # the filename order.
+    sizes = [(400, 300, 3000.0), (300, 400, 1000.0), (600, 600, 2000.0)]
     photo_ids = []
-    for i, (w, h) in enumerate(sizes, start=1):
+    for i, (w, h, taken_at) in enumerate(sizes, start=1):
         path = tmp_path / f"img{i}.jpg"
         Image.new("RGB", (w, h), ((i * 60) % 255, 120, 160)).save(path)
         cur = conn.execute(
-            "INSERT INTO photos (path, filename, width, height, mtime)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (str(path), path.name, w, h, os.path.getmtime(path)),
+            "INSERT INTO photos (path, filename, width, height, mtime, taken_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (str(path), path.name, w, h, os.path.getmtime(path), taken_at),
         )
         photo_ids.append(cur.lastrowid)
 

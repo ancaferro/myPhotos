@@ -4,6 +4,8 @@ The grid always shows COLUMNS columns: cell size is recomputed from the
 viewport width on every resize, so cards scale with the window.
 """
 
+from datetime import datetime
+
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemDelegate
@@ -12,7 +14,7 @@ from gui.data import THUMB_ASPECTS
 from gui.facepaint import draw_face_boxes
 from gui.theme import ACCENT, BORDER, MUTED, PANEL
 
-COLUMNS = 4
+DEFAULT_COLUMNS = 4
 GAP = 12  # gutter between cards (GAP/2 inset on every cell side)
 FILENAME_BAR = 30
 RADIUS = 10
@@ -81,14 +83,21 @@ class PhotoDelegate(QStyledItemDelegate):
         font = painter.font()
         font.setPixelSize(12)
         painter.setFont(font)
+        caption = photo["filename"]
+        taken = photo.get("taken_at") or photo.get("mtime")
+        if taken:
+            caption += f" · {datetime.fromtimestamp(taken):%Y-%m-%d}"
         elided = painter.fontMetrics().elidedText(
-            photo["filename"], Qt.ElideMiddle, name_rect.width()
+            caption, Qt.ElideMiddle, name_rect.width()
         )
         painter.drawText(name_rect, Qt.AlignCenter, elided)
 
+        selected = option.state & QStyle.State_Selected
         hovered = option.state & QStyle.State_MouseOver
         painter.setClipping(False)
-        painter.setPen(QPen(QColor(ACCENT if hovered else BORDER), 1))
+        painter.setPen(
+            QPen(QColor(ACCENT if selected or hovered else BORDER), 2 if selected else 1)
+        )
         painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(QRectF(card).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
         painter.restore()
@@ -105,13 +114,15 @@ class GalleryView(QListView):
         self.setModel(self._model)
         self.setItemDelegate(self.delegate)
 
+        self.columns = DEFAULT_COLUMNS
         self.setViewMode(QListView.IconMode)
         self.setResizeMode(QListView.Adjust)
         self.setMovement(QListView.Static)
         self.setWrapping(True)
         self.setUniformItemSizes(True)
         self.setSpacing(0)
-        self.setSelectionMode(QAbstractItemView.NoSelection)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.verticalScrollBar().setSingleStep(30)
         # Keep the scrollbar permanent so its appearance never re-triggers layout.
@@ -123,9 +134,21 @@ class GalleryView(QListView):
         loader.thumb_ready.connect(lambda *_: self.viewport().update())
         self.clicked.connect(self._on_clicked)
 
+    def set_columns(self, columns):
+        self.columns = max(2, min(8, int(columns)))
+        self._update_grid()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            photo = self.currentIndex().data(Qt.UserRole)
+            if photo is not None:
+                self.photo_clicked.emit(photo)
+                return
+        super().keyPressEvent(event)
+
     def _update_grid(self):
-        """Fit COLUMNS columns into the viewport; cards scale with the window."""
-        cell_w = max(GAP + 40, self.viewport().width() // COLUMNS)
+        """Fit self.columns columns into the viewport; cards scale with the window."""
+        cell_w = max(GAP + 40, self.viewport().width() // self.columns)
         card_w = cell_w - GAP
         frame_h = round(card_w / THUMB_ASPECTS[self.delegate.aspect_key])
         cell_h = frame_h + FILENAME_BAR + GAP

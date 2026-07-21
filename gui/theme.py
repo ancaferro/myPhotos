@@ -136,6 +136,16 @@ QToolButton#lightboxClose {{
   border: 1px solid {BORDER}; border-radius: 18px; font-size: 16px;
 }}
 QToolButton#lightboxClose:hover {{ background: #2e3340; border: 1px solid {ACCENT}; }}
+
+QComboBox, QSpinBox, QDoubleSpinBox {{
+  background: {BG}; border: 1px solid {BORDER}; border-radius: 6px;
+  padding: 4px 8px; min-width: 90px;
+}}
+QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {ACCENT}; }}
+QComboBox QAbstractItemView {{
+  background: {PANEL_2}; border: 1px solid {BORDER};
+  selection-background-color: {ACCENT};
+}}
 """
 
 
@@ -206,5 +216,35 @@ def eye_icon(off=False):
         p.drawEllipse(QRectF(7.5, 7.5, 5, 5))
         if off:
             p.drawLine(4, 17, 16, 3)
+
+    return _painted_icon(draw)
+
+
+def sort_icon(order):
+    """Decreasing bars for name order, a small calendar for date order."""
+
+    def draw(p):
+        if order == "date":
+            p.drawRoundedRect(QRectF(3, 4.5, 14, 12), 2, 2)
+            p.drawLine(3, 8, 17, 8)
+            p.drawLine(7, 2.5, 7, 6)
+            p.drawLine(13, 2.5, 13, 6)
+        else:
+            p.drawLine(3, 5, 17, 5)
+            p.drawLine(3, 10, 13, 10)
+            p.drawLine(3, 15, 9, 15)
+
+    return _painted_icon(draw)
+
+
+def gear_icon():
+    def draw(p):
+        p.drawEllipse(QRectF(6.5, 6.5, 7, 7))
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0),
+                       (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7), (-0.7, -0.7)):
+            p.drawLine(
+                QPointF(10 + dx * 5.4, 10 + dy * 5.4),
+                QPointF(10 + dx * 7.6, 10 + dy * 7.6),
+            )
 
     return _painted_icon(draw)

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS photos (
     width       INTEGER NOT NULL,
     height      INTEGER NOT NULL,
     mtime       REAL NOT NULL,
+    taken_at    REAL,
     analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -50,3 +51,7 @@ def get_db() -> sqlite3.Connection:
 def init_db() -> None:
     with get_db() as conn:
         conn.executescript(SCHEMA)
+        # Databases created before the EXIF capture-date column existed.
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(photos)")]
+        if "taken_at" not in columns:
+            conn.execute("ALTER TABLE photos ADD COLUMN taken_at REAL")

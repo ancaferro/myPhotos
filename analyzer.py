@@ -5,6 +5,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Set
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -33,6 +34,29 @@ MAX_DETECTION_SIDE = 1280
 MIN_FACE_SIZE = 24
 # At most this many embeddings per person are kept in memory for matching.
 MAX_EMBEDDINGS_PER_PERSON = 32
+
+
+# EXIF tags: DateTimeOriginal lives in the Exif sub-IFD, DateTime in IFD0.
+EXIF_SUB_IFD = 0x8769
+TAG_DATETIME_ORIGINAL = 36867
+TAG_DATETIME = 306
+
+
+def read_taken_at(path: str) -> float | None:
+    """Capture timestamp from EXIF metadata, or None when unavailable."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            exif = img.getexif()
+            value = exif.get_ifd(EXIF_SUB_IFD).get(TAG_DATETIME_ORIGINAL) or exif.get(
+                TAG_DATETIME
+            )
+        if not value:
+            return None
+        return datetime.strptime(str(value).strip(), "%Y:%m:%d %H:%M:%S").timestamp()
+    except Exception:  # noqa: BLE001 - EXIF is best-effort
+        return None
 
 
 def scan_image_files(folder: str) -> list[str]:
@@ -204,8 +228,9 @@ class Analyzer:
         _, detections = detector.detect(detect_img)
 
         cur = db.execute(
-            "INSERT INTO photos (path, filename, width, height, mtime) VALUES (?, ?, ?, ?, ?)",
-            (path, os.path.basename(path), width, height, mtime),
+            "INSERT INTO photos (path, filename, width, height, mtime, taken_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (path, os.path.basename(path), width, height, mtime, read_taken_at(path)),
         )
         photo_id = cur.lastrowid
 

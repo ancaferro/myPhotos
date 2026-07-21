@@ -125,7 +125,7 @@ class PeoplePanel(QWidget):
         self._loader = loader
         self._rows = []
         self._persons = []
-        self._active_id = None
+        self._active_ids = set()
         loader.portrait_ready.connect(self._on_portrait_ready)
 
         outer = QVBoxLayout(self)
@@ -148,11 +148,12 @@ class PeoplePanel(QWidget):
     def persons(self):
         return self._persons
 
-    def rebuild(self, persons, active_id):
-        if persons == self._persons and active_id == self._active_id:
+    def rebuild(self, persons, active_ids):
+        active_ids = set(active_ids)
+        if persons == self._persons and active_ids == self._active_ids:
             return
         self._persons = persons
-        self._active_id = active_id
+        self._active_ids = active_ids
         for row in self._rows:
             self._list.removeWidget(row)
             row.setParent(None)
@@ -160,7 +161,7 @@ class PeoplePanel(QWidget):
         self._rows = []
 
         for person in persons:
-            row = PersonRow(person, active=person["id"] == active_id)
+            row = PersonRow(person, active=person["id"] in active_ids)
             row.clicked.connect(self.person_clicked)
             row.rename_requested.connect(self.rename_requested)
             row.merge_requested.connect(self.merge_requested)

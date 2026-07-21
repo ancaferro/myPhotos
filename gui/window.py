@@ -1,9 +1,10 @@
 """Main window: top bar, analysis progress, gallery, people sidebar."""
 
+import html
 import logging
 import os
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -24,12 +25,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import analyzer as analyzer_mod
 from analyzer import Analyzer
 from gui import data
 from gui.gallery import GalleryView
 from gui.lightbox import Lightbox
 from gui.people import PeoplePanel
-from gui.theme import app_icon, aspect_icon, eye_icon
+from gui.settings import SettingsDialog
+from gui.theme import app_icon, aspect_icon, eye_icon, gear_icon, sort_icon
 from gui.thumbs import ImageLoader
 from paths import default_photos_dir
 
@@ -37,6 +40,8 @@ log = logging.getLogger(__name__)
 
 POLL_INTERVAL_MS = 400
 SIDEBAR_W = 280
+RESCAN_DEBOUNCE_MS = 2000
+MAX_WATCH_DIRS = 512
 
 
 class MergeDialog(QDialog):
@@ -73,14 +78,33 @@ class MainWindow(QMainWindow):
         self.settings = QSettings()
         self.aspect_key = "43" if self.settings.value("aspect") == "43" else "34"
         self.show_boxes = self.settings.value("showBoxes", "1") != "0"
-        self.active_person_id = None
+        self.sort_order = "date" if self.settings.value("sort") == "date" else "name"
+        self.watch_enabled = self.settings.value("watch", "1") != "0"
+        self.active_person_ids: set[int] = set()
+        self.watched_folder: str | None = None
         self.poll_timer = QTimer(self)
         self.poll_timer.setInterval(POLL_INTERVAL_MS)
         self.poll_timer.timeout.connect(self._poll_progress)
+        self.watcher = QFileSystemWatcher(self)
+        self.watcher.directoryChanged.connect(self._on_dir_changed)
+        self.rescan_timer = QTimer(self)
+        self.rescan_timer.setSingleShot(True)
+        self.rescan_timer.setInterval(RESCAN_DEBOUNCE_MS)
+        self.rescan_timer.timeout.connect(self._auto_rescan)
+
+        analyzer_mod.GREEDY_THRESHOLD = float(
+            self.settings.value("greedyThreshold", analyzer_mod.GREEDY_THRESHOLD)
+        )
+        analyzer_mod.CLUSTER_THRESHOLD = float(
+            self.settings.value("clusterThreshold", analyzer_mod.CLUSTER_THRESHOLD)
+        )
+        logging.getLogger().setLevel(str(self.settings.value("logLevel", "INFO")))
 
         self._build_ui()
+        self.gallery.set_columns(int(self.settings.value("columns", 4)))
         self._apply_view_settings()
         self.refresh_all()
+        self.gallery.setFocus()
 
     # ------------------------------------------------------------------- UI
 
@@ -184,15 +208,23 @@ class MainWindow(QMainWindow):
         actions.setSpacing(8)
         self.aspect_btn = QToolButton()
         self.boxes_btn = QToolButton()
-        for btn in (self.aspect_btn, self.boxes_btn):
+        self.sort_btn = QToolButton()
+        self.settings_btn = QToolButton()
+        for btn in (self.aspect_btn, self.boxes_btn, self.sort_btn, self.settings_btn):
             btn.setObjectName("actionBtn")
             btn.setFixedSize(36, 36)
             btn.setCursor(Qt.PointingHandCursor)
         self.aspect_btn.clicked.connect(self._toggle_aspect)
         self.boxes_btn.clicked.connect(self._toggle_boxes)
+        self.sort_btn.clicked.connect(self._toggle_sort)
+        self.settings_btn.setIcon(gear_icon())
+        self.settings_btn.setToolTip("Settings")
+        self.settings_btn.clicked.connect(self._open_settings)
         actions.addWidget(self.aspect_btn)
         actions.addWidget(self.boxes_btn)
+        actions.addWidget(self.sort_btn)
         actions.addStretch()
+        actions.addWidget(self.settings_btn)
         side.addLayout(actions)
 
         people_title = QLabel("PEOPLE")
@@ -223,16 +255,17 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - e.g. a corrupted database
             self._report_error("Loading people", exc)
             return
-        if self.active_person_id is not None and not any(
-            p["id"] == self.active_person_id for p in persons
-        ):
-            self.active_person_id = None
-        self.people.rebuild(persons, self.active_person_id)
+        self.active_person_ids &= {p["id"] for p in persons}
+        self.people.rebuild(persons, self.active_person_ids)
         self._update_filter_banner()
 
     def refresh_photos(self):
         try:
-            photos = data.list_photos(self.active_person_id, self.aspect_key)
+            photos = data.list_photos(
+                sorted(self.active_person_ids) or None,
+                self.aspect_key,
+                self.sort_order,
+            )
         except Exception as exc:  # noqa: BLE001 - e.g. a corrupted database
             self._report_error("Loading photos", exc)
             return
@@ -244,22 +277,33 @@ class MainWindow(QMainWindow):
         self.refresh_photos()
 
     def _update_filter_banner(self):
-        person = next(
-            (p for p in self.people.persons() if p["id"] == self.active_person_id), None
-        )
-        self.filter_banner.setVisible(person is not None)
-        if person is not None:
-            self.filter_label.setText(f"Showing photos with <b>{person['name']}</b>")
+        selected = [
+            p for p in self.people.persons() if p["id"] in self.active_person_ids
+        ]
+        self.filter_banner.setVisible(bool(selected))
+        if selected:
+            names = ", ".join(f"<b>{html.escape(p['name'])}</b>" for p in selected)
+            self.filter_label.setText(f"Showing photos with {names}")
 
     # ---------------------------------------------------------------- filter
 
     def _on_person_clicked(self, person_id):
-        self.active_person_id = None if self.active_person_id == person_id else person_id
+        # Toggle membership; several selected people filter with AND.
+        if person_id in self.active_person_ids:
+            self.active_person_ids.discard(person_id)
+        else:
+            self.active_person_ids.add(person_id)
         self.refresh_all()
 
     def _clear_filter(self):
-        self.active_person_id = None
+        self.active_person_ids.clear()
         self.refresh_all()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape and self.active_person_ids:
+            self._clear_filter()
+            return
+        super().keyPressEvent(event)
 
     # ---------------------------------------------------------- person edits
 
@@ -298,8 +342,9 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._report_error("Merge person", exc)
             return
-        if self.active_person_id == person["id"]:
-            self.active_person_id = target["id"]
+        if person["id"] in self.active_person_ids:
+            self.active_person_ids.discard(person["id"])
+            self.active_person_ids.add(target["id"])
         self.refresh_all()
 
     def _delete_person(self, person):
@@ -317,8 +362,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._report_error("Delete person", exc)
             return
-        if self.active_person_id == person["id"]:
-            self.active_person_id = None
+        self.active_person_ids.discard(person["id"])
         self.refresh_all()
 
     # ----------------------------------------------------------- view actions
@@ -334,6 +378,12 @@ class MainWindow(QMainWindow):
         self.boxes_btn.setToolTip(
             "Hide face boxes and names" if self.show_boxes else "Show face boxes and names"
         )
+        self.sort_btn.setIcon(sort_icon(self.sort_order))
+        self.sort_btn.setToolTip(
+            "Sorted by filename — click to sort by capture date"
+            if self.sort_order == "name"
+            else "Sorted by capture date — click to sort by filename"
+        )
         self.gallery.set_aspect(self.aspect_key)
         self.gallery.set_show_boxes(self.show_boxes)
 
@@ -347,6 +397,81 @@ class MainWindow(QMainWindow):
         self.show_boxes = not self.show_boxes
         self.settings.setValue("showBoxes", "1" if self.show_boxes else "0")
         self._apply_view_settings()
+
+    def _toggle_sort(self):
+        self.sort_order = "date" if self.sort_order == "name" else "name"
+        self.settings.setValue("sort", self.sort_order)
+        self._apply_view_settings()
+        self.refresh_photos()
+
+    # -------------------------------------------------------------- settings
+
+    def _open_settings(self):
+        dialog = SettingsDialog(
+            {
+                "columns": self.gallery.columns,
+                "aspect": self.aspect_key,
+                "sort": self.sort_order,
+                "watch": self.watch_enabled,
+                "greedy_threshold": analyzer_mod.GREEDY_THRESHOLD,
+                "cluster_threshold": analyzer_mod.CLUSTER_THRESHOLD,
+                "log_level": logging.getLevelName(logging.getLogger().level),
+            },
+            self,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self.apply_settings(dialog.values())
+
+    def apply_settings(self, values):
+        self.gallery.set_columns(values["columns"])
+        self.settings.setValue("columns", values["columns"])
+        self.aspect_key = values["aspect"]
+        self.settings.setValue("aspect", values["aspect"])
+        self.sort_order = values["sort"]
+        self.settings.setValue("sort", values["sort"])
+        self.watch_enabled = values["watch"]
+        self.settings.setValue("watch", "1" if values["watch"] else "0")
+        analyzer_mod.GREEDY_THRESHOLD = values["greedy_threshold"]
+        self.settings.setValue("greedyThreshold", values["greedy_threshold"])
+        analyzer_mod.CLUSTER_THRESHOLD = values["cluster_threshold"]
+        self.settings.setValue("clusterThreshold", values["cluster_threshold"])
+        logging.getLogger().setLevel(values["log_level"])
+        self.settings.setValue("logLevel", values["log_level"])
+        self._setup_watch(self.watched_folder)
+        self._apply_view_settings()
+        self.refresh_photos()
+
+    # -------------------------------------------------------- folder watching
+
+    def _setup_watch(self, folder):
+        if self.watcher.directories():
+            self.watcher.removePaths(self.watcher.directories())
+        self.watched_folder = folder
+        if not (folder and self.watch_enabled and os.path.isdir(folder)):
+            return
+        dirs = [folder]
+        for root, subdirs, _files in os.walk(folder):
+            for sub in subdirs:
+                dirs.append(os.path.join(root, sub))
+                if len(dirs) >= MAX_WATCH_DIRS:
+                    log.warning("watching only the first %d folders", MAX_WATCH_DIRS)
+                    break
+            if len(dirs) >= MAX_WATCH_DIRS:
+                break
+        self.watcher.addPaths(dirs)
+        log.info("watching %d folder(s) under %s", len(dirs), folder)
+
+    def _on_dir_changed(self, _path):
+        if self.watch_enabled and not self.analyzer.is_running():
+            self.rescan_timer.start()
+
+    def _auto_rescan(self):
+        if not self.watched_folder or self.analyzer.is_running():
+            return
+        if self.analyzer.start(self.watched_folder):
+            log.info("folder changed — re-indexing %s", self.watched_folder)
+            self._set_analyzing(True)
+            self.poll_timer.start()
 
     # -------------------------------------------------------------- analysis
 
@@ -367,6 +492,7 @@ class MainWindow(QMainWindow):
         if not self.analyzer.start(folder):
             QMessageBox.warning(self, "Analyze", "Analysis is already running")
             return
+        self._analyzing_folder = folder
         self._set_analyzing(True)
         self.poll_timer.start()
 
@@ -392,6 +518,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(
                     self, "Analyze", f"Analysis failed: {progress['error']}"
                 )
+            elif progress["status"] == "done":
+                self._setup_watch(getattr(self, "_analyzing_folder", None)
+                                  or self.watched_folder)
             self.refresh_all()
 
     # -------------------------------------------------------------- lightbox

@@ -51,10 +51,19 @@ not notarized).
 - The full-size viewer zooms with the mouse wheel (around the cursor), pans a
   zoomed photo by dragging, and switches photos with the side arrows or ←/→;
   ✕, Esc or a click on the background closes it.
-- Click a person portrait in the right sidebar to filter the gallery to photos
-  containing that person.
-- Preview aspect (vertical 3:4 by default, or 4:3) and face-box visibility are
-  toggleable and remembered between launches.
+- Click person portraits in the right sidebar to filter the gallery; several
+  selected people combine with AND (photos where they appear together).
+- Sort the gallery by filename or by EXIF capture date; the date is shown in
+  card captions and in the full-size viewer.
+- Keyboard navigation: arrows move the selection, Enter opens the photo,
+  Esc clears the person filter.
+- Preview aspect (vertical 3:4 by default, or 4:3), face-box visibility and
+  sort order are toggleable and remembered between launches; a settings
+  dialog also covers gallery columns, folder watching, clustering thresholds
+  and log verbosity.
+- Thumbnails are cached on disk, so a large library re-opens instantly.
+- The analyzed folder is watched for changes and re-indexed automatically
+  (new and removed files; can be turned off in settings).
 - Progress bar while analysis is running.
 - Results (photos, faces, persons) are persisted in SQLite; unchanged photos
   are not re-analyzed on subsequent runs.
