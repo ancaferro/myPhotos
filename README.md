@@ -35,6 +35,10 @@ executable first: `chmod +x myPhotos-Linux && ./myPhotos-Linux`. On macOS you
 may need to allow it in *System Settings → Privacy & Security* (the binary is
 not notarized).
 
+> **Note (Linux):** on Wayland sessions the app may start with a blank
+> window on some distros; launching with `QT_QPA_PLATFORM=xcb ./myPhotos-Linux`
+> works around it.
+
 ## Features
 
 - Pick any folder; images are discovered recursively (jpg, jpeg, png, webp, bmp, tiff).
