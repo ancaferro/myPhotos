@@ -38,8 +38,11 @@ MAX_EMBEDDINGS_PER_PERSON = 32
 
 # EXIF tags: DateTimeOriginal lives in the Exif sub-IFD, DateTime in IFD0.
 EXIF_SUB_IFD = 0x8769
+GPS_IFD = 0x8825
 TAG_DATETIME_ORIGINAL = 36867
 TAG_DATETIME = 306
+# GPS IFD tags: latitude/longitude and their N/S, E/W reference.
+GPS_LAT_REF, GPS_LAT, GPS_LON_REF, GPS_LON = 1, 2, 3, 4
 
 
 def read_taken_at(path: str) -> float | None:
@@ -57,6 +60,63 @@ def read_taken_at(path: str) -> float | None:
         return datetime.strptime(str(value).strip(), "%Y:%m:%d %H:%M:%S").timestamp()
     except Exception:  # noqa: BLE001 - EXIF is best-effort
         return None
+
+
+def _dms_to_degrees(dms, ref) -> float | None:
+    """Degrees/minutes/seconds triple plus an N/S/E/W reference to a float."""
+    if not dms or not ref:
+        return None
+    degrees, minutes, seconds = (float(part) for part in dms)
+    value = degrees + minutes / 60 + seconds / 3600
+    return -value if str(ref).strip().upper() in ("S", "W") else value
+
+
+def read_gps(path: str) -> tuple[float, float] | None:
+    """(latitude, longitude) from EXIF GPS metadata, or None when absent."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            gps = img.getexif().get_ifd(GPS_IFD)
+        if not gps:
+            return None
+        lat = _dms_to_degrees(gps.get(GPS_LAT), gps.get(GPS_LAT_REF))
+        lon = _dms_to_degrees(gps.get(GPS_LON), gps.get(GPS_LON_REF))
+        if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return None
+        return lat, lon
+    except Exception:  # noqa: BLE001 - EXIF is best-effort
+        return None
+
+
+def upsert_photo(
+    db: sqlite3.Connection, path: str, width: int, height: int, mtime: float
+) -> int:
+    """Insert or refresh a photo row and return its id.
+
+    A changed file keeps its row (and therefore its tags); only its faces are
+    dropped so the detector can re-populate them.
+    """
+    taken_at = read_taken_at(path)
+    gps = read_gps(path)
+    lat, lon = gps if gps else (None, None)
+    existing = db.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()
+    if existing is not None:
+        photo_id = existing["id"]
+        db.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
+        db.execute(
+            "UPDATE photos SET filename = ?, width = ?, height = ?, mtime = ?,"
+            " taken_at = ?, lat = ?, lon = ? WHERE id = ?",
+            (os.path.basename(path), width, height, mtime, taken_at, lat, lon, photo_id),
+        )
+        return photo_id
+
+    cur = db.execute(
+        "INSERT INTO photos (path, filename, width, height, mtime, taken_at, lat, lon)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (path, os.path.basename(path), width, height, mtime, taken_at, lat, lon),
+    )
+    return cur.lastrowid
 
 
 def scan_image_files(folder: str) -> list[str]:
@@ -202,12 +262,8 @@ class Analyzer:
     ) -> None:
         mtime = os.path.getmtime(path)
         existing = db.execute("SELECT id, mtime FROM photos WHERE path = ?", (path,)).fetchone()
-        if existing is not None:
-            if abs(existing["mtime"] - mtime) < 1e-6:
-                return  # already analyzed and unchanged
-            # File changed: drop old record, faces cascade away.
-            db.execute("DELETE FROM photos WHERE id = ?", (existing["id"],))
-            db.commit()
+        if existing is not None and abs(existing["mtime"] - mtime) < 1e-6:
+            return  # already analyzed and unchanged
 
         image = cv2.imread(path)
         if image is None:
@@ -227,12 +283,7 @@ class Analyzer:
         detector.setInputSize((detect_img.shape[1], detect_img.shape[0]))
         _, detections = detector.detect(detect_img)
 
-        cur = db.execute(
-            "INSERT INTO photos (path, filename, width, height, mtime, taken_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (path, os.path.basename(path), width, height, mtime, read_taken_at(path)),
-        )
-        photo_id = cur.lastrowid
+        photo_id = upsert_photo(db, path, width, height, mtime)
 
         if detections is not None:
             for det in detections:

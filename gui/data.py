@@ -39,33 +39,57 @@ def list_photos(
     person_ids: list[int] | None = None,
     aspect_key: str = "34",
     order: str = "name",
+    tag_ids: list[int] | None = None,
+    with_location: bool = False,
 ) -> list[dict]:
-    """Photos with faces and crops; person_ids filters to photos where ALL
-    of the given persons appear (AND). order is "name" or "date" (EXIF
-    capture time, falling back to file mtime)."""
+    """Photos with faces, tags and crops.
+
+    person_ids and tag_ids filter to photos matching ALL of them (AND);
+    with_location keeps only photos that carry EXIF coordinates. order is
+    "name" or "date" (EXIF capture time, falling back to file mtime).
+    """
     order_sql = (
         "ORDER BY COALESCE(taken_at, mtime), filename"
         if order == "date"
         else "ORDER BY filename"
     )
-    db = get_db()
-    if not person_ids:
-        rows = db.execute(f"SELECT * FROM photos {order_sql}").fetchall()
-    else:
+    where, params = [], []
+    if person_ids:
         marks = ",".join("?" * len(person_ids))
-        rows = db.execute(
-            f"SELECT p.* FROM photos p"
-            f" JOIN faces f ON f.photo_id = p.id"
-            f" WHERE f.person_id IN ({marks})"
-            f" GROUP BY p.id HAVING COUNT(DISTINCT f.person_id) = ? {order_sql}",
-            (*person_ids, len(person_ids)),
-        ).fetchall()
+        where.append(
+            f"p.id IN (SELECT photo_id FROM faces WHERE person_id IN ({marks})"
+            f" GROUP BY photo_id HAVING COUNT(DISTINCT person_id) = ?)"
+        )
+        params.extend([*person_ids, len(person_ids)])
+    if tag_ids:
+        marks = ",".join("?" * len(tag_ids))
+        where.append(
+            f"p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id IN ({marks})"
+            f" GROUP BY photo_id HAVING COUNT(DISTINCT tag_id) = ?)"
+        )
+        params.extend([*tag_ids, len(tag_ids)])
+    if with_location:
+        where.append("p.lat IS NOT NULL AND p.lon IS NOT NULL")
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+    db = get_db()
+    rows = db.execute(f"SELECT p.* FROM photos p {where_sql} {order_sql}", params).fetchall()
 
     face_rows = db.execute(
         "SELECT f.id, f.photo_id, f.person_id, f.x, f.y, f.w, f.h, pe.name AS person_name"
         " FROM faces f LEFT JOIN persons pe ON pe.id = f.person_id"
     ).fetchall()
+    tag_rows = db.execute(
+        "SELECT pt.photo_id, t.id, t.name FROM photo_tags pt"
+        " JOIN tags t ON t.id = pt.tag_id ORDER BY t.name"
+    ).fetchall()
     db.close()
+
+    tags_by_photo: dict[int, list[dict]] = {}
+    for t in tag_rows:
+        tags_by_photo.setdefault(t["photo_id"], []).append(
+            {"id": t["id"], "name": t["name"]}
+        )
 
     faces_by_photo = {}
     for f in face_rows:
@@ -87,6 +111,9 @@ def list_photos(
             "height": p["height"],
             "mtime": p["mtime"],
             "taken_at": p["taken_at"],
+            "lat": p["lat"],
+            "lon": p["lon"],
+            "tags": tags_by_photo.get(p["id"], []),
             "faces": faces_by_photo.get(p["id"], []),
             "crop": compute_crop(
                 p["width"], p["height"], faces_by_photo.get(p["id"], []),
@@ -133,6 +160,60 @@ def merge_person(source_id: int, target_id: int) -> None:
     db = get_db()
     db.execute("UPDATE faces SET person_id = ? WHERE person_id = ?", (target_id, source_id))
     db.execute("DELETE FROM persons WHERE id = ?", (source_id,))
+    db.commit()
+    db.close()
+
+
+def list_tags() -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        "SELECT t.id, t.name, COUNT(pt.photo_id) AS photo_count"
+        " FROM tags t LEFT JOIN photo_tags pt ON pt.tag_id = t.id"
+        " GROUP BY t.id ORDER BY t.name"
+    ).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+
+def create_tag(name: str) -> int:
+    """Create the tag (or return the id of an existing one, case-insensitive)."""
+    db = get_db()
+    db.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
+    db.commit()
+    tag_id = db.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()["id"]
+    db.close()
+    return tag_id
+
+
+def rename_tag(tag_id: int, name: str) -> None:
+    db = get_db()
+    db.execute("UPDATE tags SET name = ? WHERE id = ?", (name, tag_id))
+    db.commit()
+    db.close()
+
+
+def delete_tag(tag_id: int) -> None:
+    """Delete a tag; the photos themselves are untouched."""
+    db = get_db()
+    db.execute("DELETE FROM photo_tags WHERE tag_id = ?", (tag_id,))
+    db.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+    db.commit()
+    db.close()
+
+
+def set_photo_tag(photo_ids: list[int], tag_id: int, attached: bool) -> None:
+    """Attach or detach one tag on several photos at once."""
+    db = get_db()
+    if attached:
+        db.executemany(
+            "INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) VALUES (?, ?)",
+            [(photo_id, tag_id) for photo_id in photo_ids],
+        )
+    else:
+        db.executemany(
+            "DELETE FROM photo_tags WHERE photo_id = ? AND tag_id = ?",
+            [(photo_id, tag_id) for photo_id in photo_ids],
+        )
     db.commit()
     db.close()
 

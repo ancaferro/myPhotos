@@ -233,6 +233,11 @@ class Lightbox(QDialog):
         taken = self._photo.get("taken_at")
         if taken:
             text += f" · {datetime.fromtimestamp(taken):%Y-%m-%d %H:%M}"
+        if self._photo.get("lat") is not None:
+            text += f" · 📍 {self._photo['lat']:.5f}, {self._photo['lon']:.5f}"
+        tags = self._photo.get("tags") or []
+        if tags:
+            text += " · " + " ".join(f"#{t['name']}" for t in tags)
         if len(self._photos) > 1:
             text = f"{self._index + 1} / {len(self._photos)}   {text}"
         painter.drawText(caption, Qt.AlignCenter, text)

@@ -34,6 +34,14 @@ def person_color(person_id, alpha=1.0):
     return color
 
 
+def tag_color(tag_id, alpha=1.0):
+    """Tag hues share the golden-angle spacing but sit cooler and softer than
+    person colors, so the two sidebar lists stay visually distinct."""
+    color = QColor.fromHslF(((tag_id * GOLDEN_ANGLE + 40) % 360) / 360, 0.45, 0.68)
+    color.setAlphaF(alpha)
+    return color
+
+
 def make_palette():
     pal = QPalette()
     for group in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
@@ -233,6 +241,24 @@ def sort_icon(order):
             p.drawLine(3, 5, 17, 5)
             p.drawLine(3, 10, 13, 10)
             p.drawLine(3, 15, 9, 15)
+
+    return _painted_icon(draw)
+
+
+def pin_icon(active=False):
+    """Map pin; filled while the location filter is on."""
+
+    def draw(p):
+        pin = QPainterPath()
+        pin.moveTo(10, 18)
+        pin.cubicTo(10, 13, 16, 11.5, 16, 7.5)
+        pin.arcTo(QRectF(4, 1.5, 12, 12), 0, 180)
+        pin.cubicTo(4, 11.5, 10, 13, 10, 18)
+        if active:
+            p.fillPath(pin, QColor(ACCENT))
+        p.drawPath(pin)
+        p.setBrush(QColor(BG) if active else Qt.NoBrush)
+        p.drawEllipse(QRectF(7.6, 5.1, 4.8, 4.8))
 
     return _painted_icon(draw)
 

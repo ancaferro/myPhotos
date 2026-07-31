@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS photos (
     height      INTEGER NOT NULL,
     mtime       REAL NOT NULL,
     taken_at    REAL,
+    lat         REAL,
+    lon         REAL,
     analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -36,9 +38,24 @@ CREATE TABLE IF NOT EXISTS faces (
     embedding BLOB NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS tags (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS photo_tags (
+    photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+    tag_id   INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (photo_id, tag_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_faces_photo  ON faces(photo_id);
 CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);
+CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag_id);
 """
+
+# Columns added after 1.0: (name, declaration) applied to existing databases.
+ADDED_PHOTO_COLUMNS = [("taken_at", "REAL"), ("lat", "REAL"), ("lon", "REAL")]
 
 
 def get_db() -> sqlite3.Connection:
@@ -51,7 +68,8 @@ def get_db() -> sqlite3.Connection:
 def init_db() -> None:
     with get_db() as conn:
         conn.executescript(SCHEMA)
-        # Databases created before the EXIF capture-date column existed.
+        # Databases created before the EXIF metadata columns existed.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(photos)")]
-        if "taken_at" not in columns:
-            conn.execute("ALTER TABLE photos ADD COLUMN taken_at REAL")
+        for name, declaration in ADDED_PHOTO_COLUMNS:
+            if name not in columns:
+                conn.execute(f"ALTER TABLE photos ADD COLUMN {name} {declaration}")

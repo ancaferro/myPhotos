@@ -46,16 +46,20 @@ def seeded(db, tmp_path):
     """
     conn = db.get_db()
     # taken_at makes the capture-date order (img2, img3, img1) differ from
-    # the filename order.
-    sizes = [(400, 300, 3000.0), (300, 400, 1000.0), (600, 600, 2000.0)]
+    # the filename order; only img3 carries GPS coordinates.
+    sizes = [
+        (400, 300, 3000.0, None, None),
+        (300, 400, 1000.0, None, None),
+        (600, 600, 2000.0, 41.3874, 2.1686),
+    ]
     photo_ids = []
-    for i, (w, h, taken_at) in enumerate(sizes, start=1):
+    for i, (w, h, taken_at, lat, lon) in enumerate(sizes, start=1):
         path = tmp_path / f"img{i}.jpg"
         Image.new("RGB", (w, h), ((i * 60) % 255, 120, 160)).save(path)
         cur = conn.execute(
-            "INSERT INTO photos (path, filename, width, height, mtime, taken_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (str(path), path.name, w, h, os.path.getmtime(path), taken_at),
+            "INSERT INTO photos (path, filename, width, height, mtime, taken_at, lat, lon)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(path), path.name, w, h, os.path.getmtime(path), taken_at, lat, lon),
         )
         photo_ids.append(cur.lastrowid)
 
