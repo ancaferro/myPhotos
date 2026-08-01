@@ -4,8 +4,10 @@ import html
 import logging
 import os
 
-from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer
+from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -32,7 +35,15 @@ from gui.gallery import GalleryView
 from gui.lightbox import Lightbox
 from gui.people import PeoplePanel
 from gui.settings import SettingsDialog
-from gui.theme import app_icon, aspect_icon, eye_icon, gear_icon, sort_icon
+from gui.tags import TagsPanel
+from gui.theme import (
+    app_icon,
+    aspect_icon,
+    eye_icon,
+    gear_icon,
+    pin_icon,
+    sort_icon,
+)
 from gui.thumbs import ImageLoader
 from paths import default_photos_dir
 
@@ -81,6 +92,8 @@ class MainWindow(QMainWindow):
         self.sort_order = "date" if self.settings.value("sort") == "date" else "name"
         self.watch_enabled = self.settings.value("watch", "1") != "0"
         self.active_person_ids: set[int] = set()
+        self.active_tag_ids: set[int] = set()
+        self.location_only = False
         self.watched_folder: str | None = None
         self.poll_timer = QTimer(self)
         self.poll_timer.setInterval(POLL_INTERVAL_MS)
@@ -184,6 +197,7 @@ class MainWindow(QMainWindow):
 
         self.gallery = GalleryView(self.loader)
         self.gallery.photo_clicked.connect(self._open_lightbox)
+        self.gallery.customContextMenuRequested.connect(self._photo_context_menu)
         empty = QLabel("No analyzed photos yet. Pick a folder and press Analyze.")
         empty.setObjectName("emptyState")
         empty.setAlignment(Qt.AlignCenter)
@@ -209,20 +223,29 @@ class MainWindow(QMainWindow):
         self.aspect_btn = QToolButton()
         self.boxes_btn = QToolButton()
         self.sort_btn = QToolButton()
+        self.location_btn = QToolButton()
         self.settings_btn = QToolButton()
-        for btn in (self.aspect_btn, self.boxes_btn, self.sort_btn, self.settings_btn):
+        for btn in (
+            self.aspect_btn,
+            self.boxes_btn,
+            self.sort_btn,
+            self.location_btn,
+            self.settings_btn,
+        ):
             btn.setObjectName("actionBtn")
             btn.setFixedSize(36, 36)
             btn.setCursor(Qt.PointingHandCursor)
         self.aspect_btn.clicked.connect(self._toggle_aspect)
         self.boxes_btn.clicked.connect(self._toggle_boxes)
         self.sort_btn.clicked.connect(self._toggle_sort)
+        self.location_btn.clicked.connect(self._toggle_location_filter)
         self.settings_btn.setIcon(gear_icon())
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.clicked.connect(self._open_settings)
         actions.addWidget(self.aspect_btn)
         actions.addWidget(self.boxes_btn)
         actions.addWidget(self.sort_btn)
+        actions.addWidget(self.location_btn)
         actions.addStretch()
         actions.addWidget(self.settings_btn)
         side.addLayout(actions)
@@ -235,7 +258,27 @@ class MainWindow(QMainWindow):
         self.people.rename_requested.connect(self._rename_person)
         self.people.merge_requested.connect(self._merge_person)
         self.people.delete_requested.connect(self._delete_person)
-        side.addWidget(self.people, 1)
+        side.addWidget(self.people, 2)
+
+        tags_header = QHBoxLayout()
+        tags_title = QLabel("TAGS")
+        tags_title.setObjectName("sidebarTitle")
+        tags_header.addWidget(tags_title)
+        tags_header.addStretch()
+        new_tag_btn = QToolButton()
+        new_tag_btn.setObjectName("personBtn")
+        new_tag_btn.setText("+")
+        new_tag_btn.setToolTip("New tag")
+        new_tag_btn.setFixedSize(22, 22)
+        new_tag_btn.setCursor(Qt.PointingHandCursor)
+        new_tag_btn.clicked.connect(self._new_tag)
+        tags_header.addWidget(new_tag_btn)
+        side.addLayout(tags_header)
+        self.tags = TagsPanel()
+        self.tags.tag_clicked.connect(self._on_tag_clicked)
+        self.tags.rename_requested.connect(self._rename_tag)
+        self.tags.delete_requested.connect(self._delete_tag)
+        side.addWidget(self.tags, 1)
         body.addWidget(sidebar)
 
         root.addLayout(body, 1)
@@ -259,12 +302,24 @@ class MainWindow(QMainWindow):
         self.people.rebuild(persons, self.active_person_ids)
         self._update_filter_banner()
 
+    def refresh_tags(self):
+        try:
+            tags = data.list_tags()
+        except Exception as exc:  # noqa: BLE001 - e.g. a corrupted database
+            self._report_error("Loading tags", exc)
+            return
+        self.active_tag_ids &= {t["id"] for t in tags}
+        self.tags.rebuild(tags, self.active_tag_ids)
+        self._update_filter_banner()
+
     def refresh_photos(self):
         try:
             photos = data.list_photos(
                 sorted(self.active_person_ids) or None,
                 self.aspect_key,
                 self.sort_order,
+                sorted(self.active_tag_ids) or None,
+                self.location_only,
             )
         except Exception as exc:  # noqa: BLE001 - e.g. a corrupted database
             self._report_error("Loading photos", exc)
@@ -274,16 +329,24 @@ class MainWindow(QMainWindow):
 
     def refresh_all(self):
         self.refresh_persons()
+        self.refresh_tags()
         self.refresh_photos()
 
     def _update_filter_banner(self):
-        selected = [
-            p for p in self.people.persons() if p["id"] in self.active_person_ids
-        ]
-        self.filter_banner.setVisible(bool(selected))
-        if selected:
-            names = ", ".join(f"<b>{html.escape(p['name'])}</b>" for p in selected)
-            self.filter_label.setText(f"Showing photos with {names}")
+        parts = []
+        people = [p for p in self.people.persons() if p["id"] in self.active_person_ids]
+        if people:
+            names = ", ".join(f"<b>{html.escape(p['name'])}</b>" for p in people)
+            parts.append(f"with {names}")
+        tags = [t for t in self.tags.tags() if t["id"] in self.active_tag_ids]
+        if tags:
+            names = ", ".join(f"<b>{html.escape(t['name'])}</b>" for t in tags)
+            parts.append(f"tagged {names}")
+        if self.location_only:
+            parts.append("with location")
+        self.filter_banner.setVisible(bool(parts))
+        if parts:
+            self.filter_label.setText("Showing photos " + " · ".join(parts))
 
     # ---------------------------------------------------------------- filter
 
@@ -295,15 +358,143 @@ class MainWindow(QMainWindow):
             self.active_person_ids.add(person_id)
         self.refresh_all()
 
-    def _clear_filter(self):
-        self.active_person_ids.clear()
+    def _on_tag_clicked(self, tag_id):
+        if tag_id in self.active_tag_ids:
+            self.active_tag_ids.discard(tag_id)
+        else:
+            self.active_tag_ids.add(tag_id)
         self.refresh_all()
 
+    def _toggle_location_filter(self):
+        self.location_only = not self.location_only
+        self._apply_view_settings()
+        self.refresh_all()
+
+    def _clear_filter(self):
+        self.active_person_ids.clear()
+        self.active_tag_ids.clear()
+        self.location_only = False
+        self._apply_view_settings()
+        self.refresh_all()
+
+    def _has_filter(self):
+        return bool(self.active_person_ids or self.active_tag_ids or self.location_only)
+
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape and self.active_person_ids:
+        if event.key() == Qt.Key_Escape and self._has_filter():
             self._clear_filter()
             return
         super().keyPressEvent(event)
+
+    # ------------------------------------------------------------------ tags
+
+    def _new_tag(self, photos=None):
+        """Create a tag and, when photos are given, attach it to them."""
+        name, ok = QInputDialog.getText(self, "New tag", "Tag name:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        try:
+            tag_id = data.create_tag(name)
+            if photos:
+                data.set_photo_tag([p["id"] for p in photos], tag_id, True)
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("New tag", exc)
+            return
+        self.refresh_all()
+
+    def _rename_tag(self, tag):
+        name, ok = QInputDialog.getText(
+            self, "Rename tag", "Tag name:", QLineEdit.Normal, tag["name"]
+        )
+        name = name.strip()
+        if not ok or not name or name == tag["name"]:
+            return
+        try:
+            data.rename_tag(tag["id"], name)
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Rename tag", exc)
+            return
+        self.refresh_all()
+
+    def _delete_tag(self, tag):
+        answer = QMessageBox.question(
+            self,
+            "Delete tag",
+            f"Delete the tag “{tag['name']}”?\n"
+            f"It will be removed from {tag['photo_count']} photo(s);"
+            " the photos themselves are kept.",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            data.delete_tag(tag["id"])
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Delete tag", exc)
+            return
+        self.active_tag_ids.discard(tag["id"])
+        self.refresh_all()
+
+    def toggle_tag_on(self, photos, tag_id, attached):
+        try:
+            data.set_photo_tag([p["id"] for p in photos], tag_id, attached)
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Tagging", exc)
+            return
+        self.refresh_all()
+
+    # ---------------------------------------------------------- context menu
+
+    def _photo_context_menu(self, pos):
+        photo = self.gallery.photo_at(pos)
+        if photo is None:
+            return
+        selected = self.gallery.selected_photos()
+        if not any(p["id"] == photo["id"] for p in selected):
+            selected = [photo]
+        menu = self.build_photo_menu(photo, selected)
+        menu.exec(self.gallery.viewport().mapToGlobal(pos))
+
+    def build_photo_menu(self, photo, selected):
+        """Tag toggles for the selection plus per-photo location actions."""
+        menu = QMenu(self)
+        header = f"{len(selected)} photos" if len(selected) > 1 else photo["filename"]
+        menu.addAction(header).setEnabled(False)
+        menu.addSeparator()
+
+        tagged_everywhere = set.intersection(
+            *({t["id"] for t in p.get("tags", [])} for p in selected)
+        )
+        for tag in self.tags.tags():
+            action = menu.addAction(tag["name"])
+            action.setCheckable(True)
+            action.setChecked(tag["id"] in tagged_everywhere)
+            action.triggered.connect(
+                lambda checked, tag_id=tag["id"]: self.toggle_tag_on(
+                    selected, tag_id, checked
+                )
+            )
+        menu.addAction("New tag…").triggered.connect(lambda: self._new_tag(selected))
+
+        if photo.get("lat") is not None and len(selected) == 1:
+            menu.addSeparator()
+            coords = f"{photo['lat']:.6f}, {photo['lon']:.6f}"
+            menu.addAction(f"Copy coordinates ({coords})").triggered.connect(
+                lambda: QApplication.clipboard().setText(coords)
+            )
+            menu.addAction("Open location in OpenStreetMap").triggered.connect(
+                lambda: QDesktopServices.openUrl(
+                    QUrl(
+                        f"https://www.openstreetmap.org/?mlat={photo['lat']}"
+                        f"&mlon={photo['lon']}#map=15/{photo['lat']}/{photo['lon']}"
+                    )
+                )
+            )
+        if len(selected) == 1:
+            menu.addAction("Copy file path").triggered.connect(
+                lambda: QApplication.clipboard().setText(photo["path"])
+            )
+        return menu
 
     # ---------------------------------------------------------- person edits
 
@@ -383,6 +574,12 @@ class MainWindow(QMainWindow):
             "Sorted by filename — click to sort by capture date"
             if self.sort_order == "name"
             else "Sorted by capture date — click to sort by filename"
+        )
+        self.location_btn.setIcon(pin_icon(active=self.location_only))
+        self.location_btn.setToolTip(
+            "Showing only photos with GPS coordinates — click to show all"
+            if self.location_only
+            else "Show only photos with GPS coordinates"
         )
         self.gallery.set_aspect(self.aspect_key)
         self.gallery.set_show_boxes(self.show_boxes)

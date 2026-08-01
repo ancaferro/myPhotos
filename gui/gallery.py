@@ -12,12 +12,14 @@ from PySide6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemD
 
 from gui.data import THUMB_ASPECTS
 from gui.facepaint import draw_face_boxes
-from gui.theme import ACCENT, BORDER, MUTED, PANEL
+from gui.theme import ACCENT, BORDER, MUTED, PANEL, tag_color
 
 DEFAULT_COLUMNS = 4
 GAP = 12  # gutter between cards (GAP/2 inset on every cell side)
 FILENAME_BAR = 30
 RADIUS = 10
+TAG_DOT = 9
+MAX_TAG_DOTS = 5
 
 
 class PhotoModel(QAbstractListModel):
@@ -55,6 +57,25 @@ class PhotoDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
         return self.cell_size
 
+    @staticmethod
+    def _paint_tag_dots(painter, tags, frame):
+        """Colored dots in the bottom-left corner hint at a card's tags."""
+        if not tags:
+            return
+        painter.save()
+        painter.setPen(QPen(QColor(0, 0, 0, 120), 1))
+        for i, tag in enumerate(tags[:MAX_TAG_DOTS]):
+            painter.setBrush(tag_color(tag["id"]))
+            painter.drawEllipse(
+                QRectF(
+                    frame.x() + 8 + i * (TAG_DOT + 4),
+                    frame.bottom() - TAG_DOT - 8,
+                    TAG_DOT,
+                    TAG_DOT,
+                )
+            )
+        painter.restore()
+
     def paint(self, painter, option, index):
         photo = index.data(Qt.UserRole)
         if photo is None:
@@ -77,6 +98,7 @@ class PhotoDelegate(QStyledItemDelegate):
             painter.drawPixmap(frame, pixmap)
         if self.show_boxes:
             draw_face_boxes(painter, photo["faces"], photo["crop"], QRectF(frame))
+        self._paint_tag_dots(painter, photo.get("tags", []), frame)
 
         name_rect = QRect(card.x() + 10, frame.bottom(), card.width() - 20, FILENAME_BAR)
         painter.setPen(QColor(MUTED))
@@ -121,8 +143,10 @@ class GalleryView(QListView):
         self.setWrapping(True)
         self.setUniformItemSizes(True)
         self.setSpacing(0)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        # Extended selection so several photos can be tagged in one go.
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.verticalScrollBar().setSingleStep(30)
         # Keep the scrollbar permanent so its appearance never re-triggers layout.
@@ -177,3 +201,13 @@ class GalleryView(QListView):
         photo = index.data(Qt.UserRole)
         if photo is not None:
             self.photo_clicked.emit(photo)
+
+    def photo_at(self, pos):
+        return self.indexAt(pos).data(Qt.UserRole)
+
+    def selected_photos(self):
+        return [
+            photo
+            for index in self.selectedIndexes()
+            if (photo := index.data(Qt.UserRole)) is not None
+        ]

@@ -53,6 +53,12 @@ not notarized).
   ✕, Esc or a click on the background closes it.
 - Click person portraits in the right sidebar to filter the gallery; several
   selected people combine with AND (photos where they appear together).
+- Tag photos with your own labels (right-click a photo, or a whole selection);
+  tags appear as colored dots on the cards and as a sidebar list that filters
+  the gallery, combining with the person filter.
+- EXIF location: coordinates are stored during analysis, shown in the viewer,
+  and a pin toggle filters the gallery to geotagged photos; the context menu
+  copies the coordinates or opens them in OpenStreetMap.
 - Sort the gallery by filename or by EXIF capture date; the date is shown in
   card captions and in the full-size viewer.
 - Keyboard navigation: arrows move the selection, Enter opens the photo,
