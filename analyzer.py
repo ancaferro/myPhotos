@@ -90,19 +90,30 @@ def read_gps(path: str) -> tuple[float, float] | None:
 
 
 def upsert_photo(
-    db: sqlite3.Connection, path: str, width: int, height: int, mtime: float
+    db: sqlite3.Connection,
+    path: str,
+    width: int,
+    height: int,
+    mtime: float,
+    existing_id: int | None = None,
 ) -> int:
     """Insert or refresh a photo row and return its id.
 
     A changed file keeps its row (and therefore its tags); only its faces are
     dropped so the detector can re-populate them.
+
+    `existing_id` lets a caller that already looked up the row (as
+    `_process_photo` does, to check `mtime`) skip a second identical SELECT.
+    Left as None, the row is looked up here exactly as before.
     """
     taken_at = read_taken_at(path)
     gps = read_gps(path)
     lat, lon = gps if gps else (None, None)
-    existing = db.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()
-    if existing is not None:
-        photo_id = existing["id"]
+    if existing_id is None:
+        existing = db.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()
+        existing_id = existing["id"] if existing is not None else None
+    if existing_id is not None:
+        photo_id = existing_id
         db.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
         db.execute(
             "UPDATE photos SET filename = ?, width = ?, height = ?, mtime = ?,"
@@ -283,7 +294,10 @@ class Analyzer:
         detector.setInputSize((detect_img.shape[1], detect_img.shape[0]))
         _, detections = detector.detect(detect_img)
 
-        photo_id = upsert_photo(db, path, width, height, mtime)
+        photo_id = upsert_photo(
+            db, path, width, height, mtime,
+            existing_id=existing["id"] if existing is not None else None,
+        )
 
         if detections is not None:
             for det in detections:

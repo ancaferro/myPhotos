@@ -59,9 +59,19 @@ ADDED_PHOTO_COLUMNS = [("taken_at", "REAL"), ("lat", "REAL"), ("lon", "REAL")]
 
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    # timeout: how long a connection waits on a lock before raising, instead
+    # of the 5s default — cheap insurance now that WAL lets readers (gallery,
+    # polling) and the analyzer's writes overlap more.
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL lets the gallery keep reading while analysis is writing, and with
+    # synchronous=NORMAL a commit no longer fsyncs the whole database file —
+    # only the WAL is appended to. This is what makes analyzing large photo
+    # libraries (one commit per photo) fast; still crash-safe, per SQLite's
+    # own guidance for this exact access pattern.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
