@@ -189,8 +189,9 @@ class Analyzer:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._cancel_event = threading.Event()
         self.progress: dict[str, object] = {
-            "status": "idle",  # idle | running | done | error
+            "status": "idle",  # idle | running | done | canceled | error
             "total": 0,
             "done": 0,
             "current": "",
@@ -211,10 +212,20 @@ class Analyzer:
     def start(self, folder: str) -> bool:
         if self.is_running():
             return False
+        self._cancel_event.clear()
         self._set(status="running", total=0, done=0, current="", error="")
         self._thread = threading.Thread(target=self._run, args=(folder,), daemon=True)
         self._thread.start()
         return True
+
+    def cancel(self) -> None:
+        """Ask a running analysis to stop after the photo it's currently on.
+
+        Whatever was already processed stays committed; faces detected so
+        far are kept, just not re-clustered against the rest of the library
+        until the next run.
+        """
+        self._cancel_event.set()
 
     # ---------------------------------------------------------------- core
 
@@ -235,17 +246,28 @@ class Analyzer:
             # this run's greedy guesses when clusters are mapped to persons.
             confirmed_ids = {r["id"] for r in db.execute("SELECT id FROM faces").fetchall()}
 
+            canceled = False
+            processed = 0
             for i, path in enumerate(files):
+                if self._cancel_event.is_set():
+                    canceled = True
+                    break
                 self._set(done=i, current=os.path.basename(path))
                 try:
                     self._process_photo(db, detector, recognizer, persons, path)
                 except Exception as exc:  # noqa: BLE001 - skip unreadable files
                     log.warning("skipping %s: %s", path, exc)
+                processed = i + 1
 
-            self._set(current="Clustering faces…")
-            self._recluster(db, confirmed_ids)
+            if not canceled:
+                self._set(current="Clustering faces…")
+                self._recluster(db, confirmed_ids)
             db.close()
-            self._set(status="done", done=len(files), current="")
+            self._set(
+                status="canceled" if canceled else "done",
+                done=processed if canceled else len(files),
+                current="",
+            )
         except Exception as exc:  # noqa: BLE001
             log.exception("analysis of %s failed", folder)
             self._set(status="error", error=str(exc))
