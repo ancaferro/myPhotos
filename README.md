@@ -44,6 +44,9 @@ not notarized).
   re-clustering of all faces.
 - Persons can be renamed, merged into one another, or deleted (useful for
   false detections); every edit survives re-analysis.
+- Right-click a face in the full-size viewer to move it to another person,
+  split it off into a new one, or delete a wrong box; hand-made assignments
+  are pinned and re-clustering never moves them again.
 - Each person has a stable distinct color used for its face boxes on photos
   and for its name in the sidebar.
 - Every photo preview shows semi-transparent rectangles over detected faces

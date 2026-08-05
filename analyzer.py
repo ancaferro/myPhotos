@@ -350,10 +350,16 @@ class Analyzer:
           one person — that is what keeps a user's manual merge intact.
         - Faces assigned by this run's greedy pass vote second, one-to-one
           only, so a greedy over-merge cannot pull two clusters together.
+
+        Faces the user assigned by hand are pinned: they vote as confirmed and
+        are never moved, however the clustering turns out.
         """
-        rows = db.execute("SELECT id, person_id, embedding FROM faces").fetchall()
+        rows = db.execute("SELECT id, person_id, embedding, pinned FROM faces").fetchall()
         if len(rows) < 2 or len(rows) > MAX_RECLUSTER_FACES:
             return
+
+        pinned_ids = {r["id"] for r in rows if r["pinned"]}
+        confirmed_ids = set(confirmed_ids) | pinned_ids
 
         face_ids = [r["id"] for r in rows]
         old_person = [r["person_id"] for r in rows]
@@ -396,7 +402,7 @@ class Analyzer:
                 pid = self._create_person(db)
             db.executemany(
                 "UPDATE faces SET person_id = ? WHERE id = ?",
-                [(pid, face_ids[m]) for m in members],
+                [(pid, face_ids[m]) for m in members if face_ids[m] not in pinned_ids],
             )
 
         db.execute(

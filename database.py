@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS faces (
     w         INTEGER NOT NULL,
     h         INTEGER NOT NULL,
     score     REAL NOT NULL,
-    embedding BLOB NOT NULL
+    embedding BLOB NOT NULL,
+    -- Set when the user assigns the face by hand; re-clustering leaves it be.
+    pinned    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -54,8 +56,12 @@ CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);
 CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag_id);
 """
 
-# Columns added after 1.0: (name, declaration) applied to existing databases.
-ADDED_PHOTO_COLUMNS = [("taken_at", "REAL"), ("lat", "REAL"), ("lon", "REAL")]
+# Columns added after 1.0: table -> (name, declaration), applied on startup to
+# databases created by an older version.
+ADDED_COLUMNS = {
+    "photos": [("taken_at", "REAL"), ("lat", "REAL"), ("lon", "REAL")],
+    "faces": [("pinned", "INTEGER NOT NULL DEFAULT 0")],
+}
 
 
 def get_db() -> sqlite3.Connection:
@@ -68,8 +74,8 @@ def get_db() -> sqlite3.Connection:
 def init_db() -> None:
     with get_db() as conn:
         conn.executescript(SCHEMA)
-        # Databases created before the EXIF metadata columns existed.
-        columns = [row[1] for row in conn.execute("PRAGMA table_info(photos)")]
-        for name, declaration in ADDED_PHOTO_COLUMNS:
-            if name not in columns:
-                conn.execute(f"ALTER TABLE photos ADD COLUMN {name} {declaration}")
+        for table, added in ADDED_COLUMNS.items():
+            columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+            for name, declaration in added:
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")

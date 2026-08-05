@@ -164,6 +164,46 @@ def merge_person(source_id: int, target_id: int) -> None:
     db.close()
 
 
+def _drop_orphan_persons(db) -> None:
+    db.execute(
+        "DELETE FROM persons WHERE id NOT IN"
+        " (SELECT DISTINCT person_id FROM faces WHERE person_id IS NOT NULL)"
+    )
+
+
+def assign_face(face_id: int, person_id: int) -> None:
+    """Move one face to another person and pin it against re-clustering."""
+    db = get_db()
+    db.execute(
+        "UPDATE faces SET person_id = ?, pinned = 1 WHERE id = ?", (person_id, face_id)
+    )
+    _drop_orphan_persons(db)
+    db.commit()
+    db.close()
+
+
+def split_face_to_new_person(face_id: int, name: str) -> int:
+    """Move one face to a brand-new person (a wrongly merged face)."""
+    db = get_db()
+    person_id = db.execute("INSERT INTO persons (name) VALUES (?)", (name,)).lastrowid
+    db.execute(
+        "UPDATE faces SET person_id = ?, pinned = 1 WHERE id = ?", (person_id, face_id)
+    )
+    _drop_orphan_persons(db)
+    db.commit()
+    db.close()
+    return person_id
+
+
+def delete_face(face_id: int) -> None:
+    """Remove a face box (a false detection); the photo is kept."""
+    db = get_db()
+    db.execute("DELETE FROM faces WHERE id = ?", (face_id,))
+    _drop_orphan_persons(db)
+    db.commit()
+    db.close()
+
+
 def list_tags() -> list[dict]:
     db = get_db()
     rows = db.execute(

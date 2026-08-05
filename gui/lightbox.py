@@ -8,7 +8,7 @@ Esc or a click on the empty background closes the overlay.
 import logging
 from datetime import datetime
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QDialog, QToolButton
 
@@ -24,6 +24,8 @@ DRAG_THRESHOLD = 4
 
 
 class Lightbox(QDialog):
+    face_context_requested = Signal(dict, QPointF)
+
     def __init__(self, parent):
         super().__init__(parent, Qt.FramelessWindowHint | Qt.Dialog)
         self.setModal(True)
@@ -68,9 +70,45 @@ class Lightbox(QDialog):
         self._hover_zone = None
         self.update()
 
+    def refresh(self, photos):
+        """Adopt an updated photo list while staying open (after face edits)."""
+        if not self._photos:
+            return
+        current_id = self._photo["id"]
+        index = next((i for i, p in enumerate(photos) if p["id"] == current_id), None)
+        if index is None:
+            self.accept()  # the edit pushed this photo out of the current filter
+            return
+        self._photos = photos
+        self._index = index
+        self.update()
+
     @property
     def _photo(self):
         return self._photos[self._index]
+
+    def face_at(self, pos):
+        """The face box under a widget position, or None."""
+        if self._pixmap is None or not self._photos:
+            return None
+        dst = self._draw_rect()
+        sx = dst.width() / self._photo["width"]
+        sy = dst.height() / self._photo["height"]
+        for face in self._photo["faces"]:
+            rect = QRectF(
+                dst.x() + face["x"] * sx,
+                dst.y() + face["y"] * sy,
+                face["w"] * sx,
+                face["h"] * sy,
+            )
+            if rect.contains(pos):
+                return face
+        return None
+
+    def contextMenuEvent(self, event):
+        face = self.face_at(QPointF(event.pos()))
+        if face is not None:
+            self.face_context_requested.emit(face, QPointF(event.globalPos()))
 
     def _has_prev(self):
         return self._index > 0

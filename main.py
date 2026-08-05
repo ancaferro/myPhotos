@@ -12,7 +12,7 @@ from gui.theme import STYLESHEET, app_icon, make_palette
 from gui.window import MainWindow
 from paths import data_dir, is_frozen
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 log = logging.getLogger(__name__)
 
@@ -47,9 +47,21 @@ def excepthook(exc_type, exc, tb):
         QMessageBox.critical(None, "myPhotos", f"Unexpected error:\n{exc}")
 
 
+def prefer_xcb_on_wayland():
+    """Use XWayland for packaged Linux apps unless the user chose otherwise."""
+    if not sys.platform.startswith("linux"):
+        return
+    if not is_frozen():
+        return
+    if "WAYLAND_DISPLAY" not in os.environ:
+        return
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
+
 def main():
     setup_logging()
     sys.excepthook = excepthook
+    prefer_xcb_on_wayland()
     log.info("myPhotos %s starting", __version__)
     init_db()
     app = QApplication(sys.argv)

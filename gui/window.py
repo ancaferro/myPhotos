@@ -284,6 +284,7 @@ class MainWindow(QMainWindow):
         root.addLayout(body, 1)
         self.setCentralWidget(central)
         self.lightbox = Lightbox(self)
+        self.lightbox.face_context_requested.connect(self._face_context_menu)
 
     # ------------------------------------------------------------- refreshing
 
@@ -442,6 +443,78 @@ class MainWindow(QMainWindow):
             self._report_error("Tagging", exc)
             return
         self.refresh_all()
+
+    # ------------------------------------------------------------ face edits
+
+    def _face_context_menu(self, face, global_pos):
+        self.build_face_menu(face).exec(global_pos.toPoint())
+
+    def build_face_menu(self, face):
+        """Move a face to another person, split it off, or delete the box."""
+        menu = QMenu(self)
+        current = face["person_name"] or "Unknown"
+        menu.addAction(f"Face: {current}").setEnabled(False)
+        menu.addSeparator()
+
+        for person in self.people.persons():
+            if person["id"] == face["person_id"]:
+                continue
+            action = menu.addAction(f"Move to {person['name']}")
+            action.triggered.connect(
+                lambda _=False, p=person: self._assign_face(face, p)
+            )
+        menu.addAction("Move to a new person…").triggered.connect(
+            lambda: self._split_face(face)
+        )
+        menu.addSeparator()
+        menu.addAction("Delete this face box").triggered.connect(
+            lambda: self._delete_face(face)
+        )
+        return menu
+
+    def _after_face_edit(self):
+        self.refresh_all()
+        if self.lightbox.isVisible():
+            self.lightbox.refresh(self.gallery._model.photos())
+
+    def _assign_face(self, face, person):
+        try:
+            data.assign_face(face["id"], person["id"])
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Move face", exc)
+            return
+        log.info("face %s moved to person %s", face["id"], person["id"])
+        self._after_face_edit()
+
+    def _split_face(self, face):
+        name, ok = QInputDialog.getText(
+            self, "Move to a new person", "Name:", QLineEdit.Normal, ""
+        )
+        name = name.strip()
+        if not ok or not name:
+            return
+        try:
+            data.split_face_to_new_person(face["id"], name)
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Move face", exc)
+            return
+        self._after_face_edit()
+
+    def _delete_face(self, face):
+        answer = QMessageBox.question(
+            self,
+            "Delete face box",
+            f"Delete this face box ({face['person_name'] or 'Unknown'})?\n"
+            "The photo itself is kept.",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            data.delete_face(face["id"])
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Delete face", exc)
+            return
+        self._after_face_edit()
 
     # ---------------------------------------------------------- context menu
 
