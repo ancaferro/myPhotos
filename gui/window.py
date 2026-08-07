@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("myPhotos")
         self.setMinimumSize(960, 640)
+        self.setAcceptDrops(True)
 
         self.analyzer = Analyzer()
         self.loader = ImageLoader(self)
@@ -141,7 +142,10 @@ class MainWindow(QMainWindow):
         top.addWidget(brand)
         self.folder_input = QLineEdit()
         self.folder_input.setPlaceholderText("Path to a folder with photos…")
-        self.folder_input.setText(default_photos_dir())
+        self.folder_input.setText(str(self.settings.value("lastFolder") or default_photos_dir()))
+        # Let a dropped folder reach MainWindow.dropEvent instead of Qt
+        # inserting the URL's raw text into the field.
+        self.folder_input.setAcceptDrops(False)
         top.addWidget(self.folder_input, 1)
         browse = QToolButton()
         browse.setObjectName("browseBtn")
@@ -167,6 +171,11 @@ class MainWindow(QMainWindow):
         self.progress_label = QLabel()
         self.progress_label.setObjectName("progressLabel")
         progress.addWidget(self.progress_label)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("linkBtn")
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._cancel_analysis)
+        progress.addWidget(self.cancel_btn)
         self.progress_row.hide()
         root.addWidget(self.progress_row)
 
@@ -386,6 +395,26 @@ class MainWindow(QMainWindow):
             self._clear_filter()
             return
         super().keyPressEvent(event)
+
+    # ------------------------------------------------------------ drag & drop
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            if not url.isLocalFile():
+                continue
+            local_path = url.toLocalFile()
+            folder = local_path if os.path.isdir(local_path) else os.path.dirname(local_path)
+            if os.path.isdir(folder):
+                self.folder_input.setText(folder)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
 
     # ------------------------------------------------------------------ tags
 
@@ -762,14 +791,20 @@ class MainWindow(QMainWindow):
         if not self.analyzer.start(folder):
             QMessageBox.warning(self, "Analyze", "Analysis is already running")
             return
+        self.settings.setValue("lastFolder", folder)
         self._analyzing_folder = folder
         self._set_analyzing(True)
         self.poll_timer.start()
+
+    def _cancel_analysis(self):
+        self.analyzer.cancel()
+        self.cancel_btn.setDisabled(True)
 
     def _set_analyzing(self, on):
         self.analyze_btn.setDisabled(on)
         self.analyze_btn.setText("Analyzing…" if on else "Analyze")
         self.progress_row.setVisible(on)
+        self.cancel_btn.setDisabled(False)
 
     def _poll_progress(self):
         progress = self.analyzer.get_progress()
@@ -787,6 +822,13 @@ class MainWindow(QMainWindow):
             if progress["status"] == "error":
                 QMessageBox.critical(
                     self, "Analyze", f"Analysis failed: {progress['error']}"
+                )
+            elif progress["status"] == "canceled":
+                QMessageBox.information(
+                    self,
+                    "Analyze",
+                    f"Analysis canceled — kept {done} of {total} photo(s)"
+                    " already processed.",
                 )
             elif progress["status"] == "done":
                 self._setup_watch(getattr(self, "_analyzing_folder", None)

@@ -90,19 +90,30 @@ def read_gps(path: str) -> tuple[float, float] | None:
 
 
 def upsert_photo(
-    db: sqlite3.Connection, path: str, width: int, height: int, mtime: float
+    db: sqlite3.Connection,
+    path: str,
+    width: int,
+    height: int,
+    mtime: float,
+    existing_id: int | None = None,
 ) -> int:
     """Insert or refresh a photo row and return its id.
 
     A changed file keeps its row (and therefore its tags); only its faces are
     dropped so the detector can re-populate them.
+
+    `existing_id` lets a caller that already looked up the row (as
+    `_process_photo` does, to check `mtime`) skip a second identical SELECT.
+    Left as None, the row is looked up here exactly as before.
     """
     taken_at = read_taken_at(path)
     gps = read_gps(path)
     lat, lon = gps if gps else (None, None)
-    existing = db.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()
-    if existing is not None:
-        photo_id = existing["id"]
+    if existing_id is None:
+        existing = db.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()
+        existing_id = existing["id"] if existing is not None else None
+    if existing_id is not None:
+        photo_id = existing_id
         db.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
         db.execute(
             "UPDATE photos SET filename = ?, width = ?, height = ?, mtime = ?,"
@@ -178,8 +189,9 @@ class Analyzer:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._cancel_event = threading.Event()
         self.progress: dict[str, object] = {
-            "status": "idle",  # idle | running | done | error
+            "status": "idle",  # idle | running | done | canceled | error
             "total": 0,
             "done": 0,
             "current": "",
@@ -200,10 +212,20 @@ class Analyzer:
     def start(self, folder: str) -> bool:
         if self.is_running():
             return False
+        self._cancel_event.clear()
         self._set(status="running", total=0, done=0, current="", error="")
         self._thread = threading.Thread(target=self._run, args=(folder,), daemon=True)
         self._thread.start()
         return True
+
+    def cancel(self) -> None:
+        """Ask a running analysis to stop after the photo it's currently on.
+
+        Whatever was already processed stays committed; faces detected so
+        far are kept, just not re-clustered against the rest of the library
+        until the next run.
+        """
+        self._cancel_event.set()
 
     # ---------------------------------------------------------------- core
 
@@ -224,17 +246,28 @@ class Analyzer:
             # this run's greedy guesses when clusters are mapped to persons.
             confirmed_ids = {r["id"] for r in db.execute("SELECT id FROM faces").fetchall()}
 
+            canceled = False
+            processed = 0
             for i, path in enumerate(files):
+                if self._cancel_event.is_set():
+                    canceled = True
+                    break
                 self._set(done=i, current=os.path.basename(path))
                 try:
                     self._process_photo(db, detector, recognizer, persons, path)
                 except Exception as exc:  # noqa: BLE001 - skip unreadable files
                     log.warning("skipping %s: %s", path, exc)
+                processed = i + 1
 
-            self._set(current="Clustering faces…")
-            self._recluster(db, confirmed_ids)
+            if not canceled:
+                self._set(current="Clustering faces…")
+                self._recluster(db, confirmed_ids)
             db.close()
-            self._set(status="done", done=len(files), current="")
+            self._set(
+                status="canceled" if canceled else "done",
+                done=processed if canceled else len(files),
+                current="",
+            )
         except Exception as exc:  # noqa: BLE001
             log.exception("analysis of %s failed", folder)
             self._set(status="error", error=str(exc))
@@ -283,7 +316,10 @@ class Analyzer:
         detector.setInputSize((detect_img.shape[1], detect_img.shape[0]))
         _, detections = detector.detect(detect_img)
 
-        photo_id = upsert_photo(db, path, width, height, mtime)
+        photo_id = upsert_photo(
+            db, path, width, height, mtime,
+            existing_id=existing["id"] if existing is not None else None,
+        )
 
         if detections is not None:
             for det in detections:
