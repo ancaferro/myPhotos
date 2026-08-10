@@ -39,6 +39,7 @@ from gui.tags import TagsPanel
 from gui.theme import (
     app_icon,
     aspect_icon,
+    clear_face_icon,
     eye_icon,
     gear_icon,
     pin_icon,
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         self.active_person_ids: set[int] = set()
         self.active_tag_ids: set[int] = set()
         self.location_only = False
+        self.clear_faces_only = self.settings.value("clearFaces", "0") != "0"
         self.watched_folder: str | None = None
         self.poll_timer = QTimer(self)
         self.poll_timer.setInterval(POLL_INTERVAL_MS)
@@ -228,17 +230,19 @@ class MainWindow(QMainWindow):
         actions_title.setObjectName("sidebarTitle")
         side.addWidget(actions_title)
         actions = QHBoxLayout()
-        actions.setSpacing(8)
+        actions.setSpacing(6)
         self.aspect_btn = QToolButton()
         self.boxes_btn = QToolButton()
         self.sort_btn = QToolButton()
         self.location_btn = QToolButton()
+        self.clear_faces_btn = QToolButton()
         self.settings_btn = QToolButton()
         for btn in (
             self.aspect_btn,
             self.boxes_btn,
             self.sort_btn,
             self.location_btn,
+            self.clear_faces_btn,
             self.settings_btn,
         ):
             btn.setObjectName("actionBtn")
@@ -248,6 +252,7 @@ class MainWindow(QMainWindow):
         self.boxes_btn.clicked.connect(self._toggle_boxes)
         self.sort_btn.clicked.connect(self._toggle_sort)
         self.location_btn.clicked.connect(self._toggle_location_filter)
+        self.clear_faces_btn.clicked.connect(self._toggle_clear_faces)
         self.settings_btn.setIcon(gear_icon())
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.clicked.connect(self._open_settings)
@@ -255,6 +260,7 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.boxes_btn)
         actions.addWidget(self.sort_btn)
         actions.addWidget(self.location_btn)
+        actions.addWidget(self.clear_faces_btn)
         actions.addStretch()
         actions.addWidget(self.settings_btn)
         side.addLayout(actions)
@@ -330,6 +336,7 @@ class MainWindow(QMainWindow):
                 self.sort_order,
                 sorted(self.active_tag_ids) or None,
                 self.location_only,
+                self.clear_faces_only,
             )
         except Exception as exc:  # noqa: BLE001 - e.g. a corrupted database
             self._report_error("Loading photos", exc)
@@ -354,6 +361,8 @@ class MainWindow(QMainWindow):
             parts.append(f"tagged {names}")
         if self.location_only:
             parts.append("with location")
+        if self.clear_faces_only and self.active_person_ids:
+            parts.append("only clearly visible faces")
         self.filter_banner.setVisible(bool(parts))
         if parts:
             self.filter_label.setText("Showing photos " + " · ".join(parts))
@@ -380,10 +389,17 @@ class MainWindow(QMainWindow):
         self._apply_view_settings()
         self.refresh_all()
 
+    def _toggle_clear_faces(self):
+        self.clear_faces_only = not self.clear_faces_only
+        self.settings.setValue("clearFaces", "1" if self.clear_faces_only else "0")
+        self._apply_view_settings()
+        self.refresh_all()
+
     def _clear_filter(self):
         self.active_person_ids.clear()
         self.active_tag_ids.clear()
         self.location_only = False
+        self.clear_faces_only = False
         self._apply_view_settings()
         self.refresh_all()
 
@@ -682,6 +698,12 @@ class MainWindow(QMainWindow):
             "Showing only photos with GPS coordinates — click to show all"
             if self.location_only
             else "Show only photos with GPS coordinates"
+        )
+        self.clear_faces_btn.setIcon(clear_face_icon(active=self.clear_faces_only))
+        self.clear_faces_btn.setToolTip(
+            "Showing only clearly visible faces of the selected person(s) — click to show all"
+            if self.clear_faces_only
+            else "Show only photos where the selected person's face is clearly visible"
         )
         self.gallery.set_aspect(self.aspect_key)
         self.gallery.set_show_boxes(self.show_boxes)

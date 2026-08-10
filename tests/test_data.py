@@ -1,5 +1,7 @@
 """Tests for gui.data: crop math and the read/write queries."""
 
+import numpy as np
+
 from gui import data
 
 
@@ -101,3 +103,54 @@ class TestQueries:
         assert row["x"] == 10 and row["w"] == 50
         assert row["path"].endswith("img1.jpg")
         assert data.face_portrait_source(99999) is None
+
+
+def _seed_faces_for_clear(db, tmp_path):
+    """One photo with a large high-score face, one with a tiny low-score face."""
+    conn = db.get_db()
+    person = conn.execute("INSERT INTO persons (name) VALUES ('Alice')").lastrowid
+    specs = [
+        (1000, 800, 400, 300, 0.99),  # clearly visible
+        (1000, 800, 30, 20, 0.7),     # tiny and low confidence
+    ]
+    photo_ids = []
+    for i, (w, h, fw, fh, score) in enumerate(specs):
+        path = tmp_path / f"pic{i}.jpg"
+        from PIL import Image
+
+        Image.new("RGB", (w, h), (0, 0, 0)).save(path)
+        pid = conn.execute(
+            "INSERT INTO photos (path, filename, width, height, mtime)"
+            " VALUES (?, ?, ?, ?, 1)",
+            (str(path), path.name, w, h),
+        ).lastrowid
+        photo_ids.append(pid)
+        conn.execute(
+            "INSERT INTO faces (photo_id, person_id, x, y, w, h, score, embedding)"
+            " VALUES (?, ?, 0, 0, ?, ?, ?, ?)",
+            (pid, person, fw, fh, score, np.zeros(8, dtype=np.float32).tobytes()),
+        )
+    conn.commit()
+    conn.close()
+    return person, photo_ids
+
+
+class TestClearFacesFilter:
+    def test_clear_faces_keeps_only_clearly_visible_photos(self, db, tmp_path):
+        person, photo_ids = _seed_faces_for_clear(db, tmp_path)
+        photos = data.list_photos(person_ids=[person], clear_faces=True)
+        assert [p["filename"] for p in photos] == ["pic0.jpg"]
+
+    def test_without_clear_faces_both_photos_match(self, db, tmp_path):
+        person, photo_ids = _seed_faces_for_clear(db, tmp_path)
+        photos = data.list_photos(person_ids=[person])
+        assert [p["filename"] for p in photos] == ["pic0.jpg", "pic1.jpg"]
+
+    def test_clear_faces_requires_a_person_filter(self, db, tmp_path):
+        person, photo_ids = _seed_faces_for_clear(db, tmp_path)
+        assert len(data.list_photos(clear_faces=True)) == 2  # no person: no-op
+
+    def test_clear_faces_combines_with_other_filters(self, db, tmp_path):
+        person, photo_ids = _seed_faces_for_clear(db, tmp_path)
+        photos = data.list_photos(person_ids=[person], clear_faces=True, with_location=True)
+        assert photos == []  # no photo has coordinates

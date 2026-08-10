@@ -1,5 +1,7 @@
 """Tests for analyzer helpers: file scan, clustering and recluster mapping."""
 
+import os
+
 import numpy as np
 
 import analyzer
@@ -27,8 +29,9 @@ class TestScan:
         for name in ["b.JPG", "a.png", "sub/c.webp", "notes.txt", "d.tiff"]:
             (tmp_path / name).write_bytes(b"x")
         files = scan_image_files(str(tmp_path))
-        names = [f.replace(str(tmp_path) + "/", "") for f in files]
-        assert names == sorted(["b.JPG", "a.png", "sub/c.webp", "d.tiff"])
+        names = [os.path.relpath(f, str(tmp_path)) for f in files]
+        expected = sorted(["b.JPG", "a.png", os.path.join("sub", "c.webp"), "d.tiff"])
+        assert names == expected
 
 
 class TestNormalize:

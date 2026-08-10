@@ -5,6 +5,7 @@ import os
 import sqlite3
 from datetime import datetime
 
+import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
@@ -196,3 +197,54 @@ class TestFolderWatching:
         assert calls == [str(tmp_path)]
         window.poll_timer.stop()
         window._set_analyzing(False)
+
+
+class TestClearFacesInGui:
+    def test_toggle_filters_gallery_and_persists(
+        self, qapp, db, isolated_settings, tmp_path
+    ):
+        from PIL import Image
+
+        conn = db.get_db()
+        person = conn.execute("INSERT INTO persons (name) VALUES ('Alice')").lastrowid
+        for name, (w, h, fw, fh, score) in {
+            "clear.jpg": (1000, 800, 400, 300, 0.99),
+            "tiny.jpg": (1000, 800, 30, 20, 0.7),
+        }.items():
+            path = tmp_path / name
+            Image.new("RGB", (w, h), (0, 0, 0)).save(path)
+            pid = conn.execute(
+                "INSERT INTO photos (path, filename, width, height, mtime)"
+                " VALUES (?, ?, ?, ?, 1)",
+                (str(path), path.name, w, h),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO faces (photo_id, person_id, x, y, w, h, score, embedding)"
+                " VALUES (?, ?, 0, 0, ?, ?, ?, ?)",
+                (pid, person, fw, fh, score, np.zeros(8, dtype=np.float32).tobytes()),
+            )
+        conn.commit()
+        conn.close()
+
+        win = gui.window.MainWindow()
+        win.show()
+        try:
+            assert len(win.gallery._model.photos()) == 2
+            win._on_person_clicked(person)
+            wait_idle(qapp, win)
+            assert len(win.gallery._model.photos()) == 2  # person on both
+
+            win._toggle_clear_faces()
+            wait_idle(qapp, win)
+            assert win.clear_faces_only is True
+            assert win.settings.value("clearFaces") == "1"
+            assert [p["filename"] for p in win.gallery._model.photos()] == ["clear.jpg"]
+            assert "clearly visible" in win.filter_label.text()
+
+            win._toggle_clear_faces()
+            wait_idle(qapp, win)
+            assert len(win.gallery._model.photos()) == 2
+        finally:
+            win.close()
+            win.deleteLater()
+            qapp.processEvents()

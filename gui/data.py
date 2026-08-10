@@ -7,6 +7,12 @@ THUMB_ASPECTS = {"34": 3 / 4, "43": 4 / 3}
 THUMB_MAX = {"34": (450, 600), "43": (600, 450)}
 PORTRAIT_SIZE = 128
 
+# A face counts as "clearly visible" when it was detected confidently and is
+# at least this fraction of the photo in one axis — used by the clear-faces
+# person filter to drop tiny/blurry/back-of-head detections.
+CLEAR_FACE_MIN_SCORE = 0.9
+CLEAR_FACE_MIN_FRACTION = 0.08
+
 
 def compute_crop(
     width: int, height: int, faces: list[dict], aspect: float
@@ -41,12 +47,16 @@ def list_photos(
     order: str = "name",
     tag_ids: list[int] | None = None,
     with_location: bool = False,
+    clear_faces: bool = False,
 ) -> list[dict]:
     """Photos with faces, tags and crops.
 
     person_ids and tag_ids filter to photos matching ALL of them (AND);
     with_location keeps only photos that carry EXIF coordinates. order is
     "name" or "date" (EXIF capture time, falling back to file mtime).
+    clear_faces further narrows a person filter to photos where each selected
+    person has a face that is clearly visible (confident detection and
+    reasonably large) — tiny, blurry or back-of-head detections are skipped.
     """
     order_sql = (
         "ORDER BY COALESCE(taken_at, mtime), filename"
@@ -56,11 +66,24 @@ def list_photos(
     where, params = [], []
     if person_ids:
         marks = ",".join("?" * len(person_ids))
-        where.append(
-            f"p.id IN (SELECT photo_id FROM faces WHERE person_id IN ({marks})"
-            f" GROUP BY photo_id HAVING COUNT(DISTINCT person_id) = ?)"
-        )
-        params.extend([*person_ids, len(person_ids)])
+        if clear_faces:
+            where.append(
+                f"p.id IN (SELECT f.photo_id FROM faces f"
+                f" JOIN photos p2 ON p2.id = f.photo_id"
+                f" WHERE f.person_id IN ({marks}) AND f.score >= ?"
+                f" AND (f.w * 1.0 >= ? * p2.width OR f.h * 1.0 >= ? * p2.height)"
+                f" GROUP BY f.photo_id HAVING COUNT(DISTINCT f.person_id) = ?)"
+            )
+            params.extend(
+                [*person_ids, CLEAR_FACE_MIN_SCORE, CLEAR_FACE_MIN_FRACTION,
+                 CLEAR_FACE_MIN_FRACTION, len(person_ids)]
+            )
+        else:
+            where.append(
+                f"p.id IN (SELECT photo_id FROM faces WHERE person_id IN ({marks})"
+                f" GROUP BY photo_id HAVING COUNT(DISTINCT person_id) = ?)"
+            )
+            params.extend([*person_ids, len(person_ids)])
     if tag_ids:
         marks = ",".join("?" * len(tag_ids))
         where.append(
@@ -75,14 +98,24 @@ def list_photos(
     db = get_db()
     rows = db.execute(f"SELECT p.* FROM photos p {where_sql} {order_sql}", params).fetchall()
 
-    face_rows = db.execute(
-        "SELECT f.id, f.photo_id, f.person_id, f.x, f.y, f.w, f.h, pe.name AS person_name"
-        " FROM faces f LEFT JOIN persons pe ON pe.id = f.person_id"
-    ).fetchall()
-    tag_rows = db.execute(
-        "SELECT pt.photo_id, t.id, t.name FROM photo_tags pt"
-        " JOIN tags t ON t.id = pt.tag_id ORDER BY t.name"
-    ).fetchall()
+    ids = [p["id"] for p in rows]
+    if ids:
+        marks = ",".join("?" * len(ids))
+        face_rows = db.execute(
+            f"SELECT f.id, f.photo_id, f.person_id, f.x, f.y, f.w, f.h, pe.name AS person_name"
+            f" FROM faces f LEFT JOIN persons pe ON pe.id = f.person_id"
+            f" WHERE f.photo_id IN ({marks})",
+            ids,
+        ).fetchall()
+        tag_rows = db.execute(
+            f"SELECT pt.photo_id, t.id, t.name FROM photo_tags pt"
+            f" JOIN tags t ON t.id = pt.tag_id"
+            f" WHERE pt.photo_id IN ({marks}) ORDER BY t.name",
+            ids,
+        ).fetchall()
+    else:
+        face_rows = []
+        tag_rows = []
     db.close()
 
     tags_by_photo: dict[int, list[dict]] = {}

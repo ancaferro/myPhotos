@@ -263,6 +263,25 @@ def pin_icon(active=False):
     return _painted_icon(draw)
 
 
+def clear_face_icon(active=False):
+    """Face with a check badge; filled while the clear-faces filter is on."""
+
+    def draw(p):
+        p.drawEllipse(QRectF(3.5, 3, 13, 14))        # head
+        p.drawEllipse(QRectF(7, 7.5, 1.8, 1.8))      # left eye
+        p.drawEllipse(QRectF(11.2, 7.5, 1.8, 1.8))   # right eye
+        p.drawArc(QRectF(7, 10, 6, 4), 0, -180 * 16) # smile
+        if active:
+            p.setBrush(QColor(ACCENT))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QRectF(13.2, 1.2, 5.4, 5.4))  # badge
+            p.setPen(QPen(QColor("#ffffff"), 1.2))
+            p.drawLine(14.4, 4.3, 15.6, 5.3)
+            p.drawLine(15.6, 5.3, 17.5, 3.1)
+
+    return _painted_icon(draw)
+
+
 def gear_icon():
     def draw(p):
         p.drawEllipse(QRectF(6.5, 6.5, 7, 7))

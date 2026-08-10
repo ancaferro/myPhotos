@@ -230,6 +230,7 @@ class Analyzer:
     # ---------------------------------------------------------------- core
 
     def _run(self, folder: str) -> None:
+        db = None
         try:
             detector = cv2.FaceDetectorYN.create(
                 DETECTOR_MODEL, "", (320, 320), DETECTION_SCORE_THRESHOLD
@@ -262,7 +263,6 @@ class Analyzer:
             if not canceled:
                 self._set(current="Clustering faces…")
                 self._recluster(db, confirmed_ids)
-            db.close()
             self._set(
                 status="canceled" if canceled else "done",
                 done=processed if canceled else len(files),
@@ -271,6 +271,9 @@ class Analyzer:
         except Exception as exc:  # noqa: BLE001
             log.exception("analysis of %s failed", folder)
             self._set(status="error", error=str(exc))
+        finally:
+            if db is not None:
+                db.close()
 
     def _load_persons(self, db: sqlite3.Connection) -> dict[int, list[np.ndarray]]:
         """Load stored embeddings grouped by person for incremental clustering."""
