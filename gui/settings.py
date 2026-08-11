@@ -7,7 +7,9 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
 )
@@ -15,10 +17,23 @@ from PySide6.QtWidgets import (
 LOG_LEVELS = ["WARNING", "INFO", "DEBUG"]
 
 
-class SettingsDialog(QDialog):
-    """Edits a plain values dict; the window applies and persists it."""
+def format_size(num_bytes):
+    """Byte count as a short human-readable string."""
+    if num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.0f} KB"
+    if num_bytes < 1024 * 1024 * 1024:
+        return f"{num_bytes / 1024 / 1024:.0f} MB"
+    return f"{num_bytes / 1024 / 1024 / 1024:.1f} GB"
 
-    def __init__(self, values, parent=None):
+
+class SettingsDialog(QDialog):
+    """Edits a plain values dict; the window applies and persists it.
+
+    `cache` is an optional (size_fn, clear_fn) pair; when given, the dialog
+    shows the thumbnail cache size and a button that empties it.
+    """
+
+    def __init__(self, values, parent=None, cache=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         layout = QVBoxLayout(self)
@@ -45,6 +60,18 @@ class SettingsDialog(QDialog):
         self.watch = QCheckBox("Re-index automatically when the folder changes")
         self.watch.setChecked(values["watch"])
         form.addRow("Folder watching", self.watch)
+
+        self._cache = cache
+        if cache is not None:
+            self.cache_size = QLabel()
+            self.clear_cache_btn = QPushButton("Clear")
+            self.clear_cache_btn.clicked.connect(self._clear_cache)
+            row = QHBoxLayout()
+            row.addWidget(self.cache_size)
+            row.addStretch(1)
+            row.addWidget(self.clear_cache_btn)
+            form.addRow("Thumbnail cache", row)
+            self._refresh_cache_size()
 
         advanced = QLabel("Advanced — clustering (applies to the next analysis)")
         advanced.setObjectName("mutedLabel")
@@ -77,6 +104,17 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _refresh_cache_size(self):
+        size_fn, _clear_fn = self._cache
+        size = size_fn()
+        self.cache_size.setText(format_size(size))
+        self.clear_cache_btn.setEnabled(size > 0)
+
+    def _clear_cache(self):
+        _size_fn, clear_fn = self._cache
+        clear_fn()
+        self._refresh_cache_size()
 
     def values(self):
         return {

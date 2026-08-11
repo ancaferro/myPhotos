@@ -7,6 +7,7 @@ thread through signals; pixmaps are created and cached there.
 
 import logging
 import os
+import threading
 
 from PySide6.QtCore import QObject, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QImage, QImageReader, QPixmap
@@ -15,6 +16,15 @@ from gui.data import PORTRAIT_SIZE, THUMB_MAX, face_portrait_source
 from paths import data_dir
 
 log = logging.getLogger(__name__)
+
+# Upper bound for the on-disk thumbnail cache. The cache key changes whenever a
+# photo's mtime, aspect or crop changes, so entries are naturally superseded;
+# without a budget the superseded ones (and those of photos no longer in the
+# library) would stay on disk forever. Least-recently-used files are dropped
+# first — a discarded thumbnail only costs one re-decode.
+MAX_CACHE_BYTES = 512 * 1024 * 1024
+# Trimming scans the directory, so it is not worth doing on every single write.
+TRIM_EVERY_WRITES = 200
 
 
 def _read_image(path):
@@ -53,6 +63,11 @@ class ImageLoader(QObject):
         os.makedirs(self._cache_dir, exist_ok=True)
         self._thumb_done.connect(self._on_thumb_done)
         self._portrait_done.connect(self._on_portrait_done)
+        # Writes happen on pool threads; the counter and the trim are guarded.
+        self._cache_lock = threading.Lock()
+        # Primed so the first write of the session also trims, which is what
+        # collects entries orphaned by edits made while the app was closed.
+        self._writes_since_trim = TRIM_EVERY_WRITES
 
     def _cache_path(self, photo, aspect_key):
         """Disk-cache location; the key invalidates on file change (mtime),
@@ -63,6 +78,79 @@ class ImageLoader(QObject):
             f"-{crop['x']}x{crop['y']}x{crop['w']}x{crop['h']}"
         )
         return os.path.join(self._cache_dir, key + ".jpg")
+
+    # ------------------------------------------------------------- disk cache
+
+    def _cache_entries(self):
+        """(path, size, last_use) for every file in the cache directory."""
+        entries = []
+        try:
+            with os.scandir(self._cache_dir) as it:
+                for entry in it:
+                    try:
+                        if entry.is_file():
+                            stat = entry.stat()
+                            entries.append((entry.path, stat.st_size, stat.st_mtime))
+                    except OSError:  # vanished mid-scan
+                        continue
+        except OSError:
+            log.exception("could not read thumbnail cache %s", self._cache_dir)
+        return entries
+
+    def cache_size(self):
+        """Total bytes currently held by the on-disk thumbnail cache."""
+        return sum(size for _path, size, _used in self._cache_entries())
+
+    def clear_cache(self):
+        """Delete every cached thumbnail. Returns the number of bytes freed."""
+        freed = 0
+        with self._cache_lock:
+            for path, size, _used in self._cache_entries():
+                try:
+                    os.remove(path)
+                    freed += size
+                except OSError:
+                    log.warning("could not remove cached thumbnail %s", path)
+            self._writes_since_trim = 0
+        return freed
+
+    def _touch(self, path):
+        """Mark a cache hit; mtime doubles as the last-use time for eviction."""
+        try:
+            os.utime(path, None)
+        except OSError:  # best-effort — a stale mtime only skews eviction order
+            pass
+
+    def _note_write(self):
+        """Count a cache write and trim when enough have piled up."""
+        with self._cache_lock:
+            self._writes_since_trim += 1
+            if self._writes_since_trim < TRIM_EVERY_WRITES:
+                return
+            self._writes_since_trim = 0
+            self._trim_locked()
+
+    def _trim_locked(self):
+        """Drop least-recently-used files until under MAX_CACHE_BYTES."""
+        entries = self._cache_entries()
+        total = sum(size for _path, size, _used in entries)
+        if total <= MAX_CACHE_BYTES:
+            return
+        entries.sort(key=lambda e: e[2])  # oldest last-use first
+        removed = 0
+        for path, size, _used in entries:
+            if total <= MAX_CACHE_BYTES:
+                break
+            try:
+                os.remove(path)
+            except OSError:
+                continue
+            total -= size
+            removed += 1
+        log.info(
+            "trimmed thumbnail cache: removed %d files, now %.1f MiB",
+            removed, total / 1024 / 1024,
+        )
 
     # ------------------------------------------------------------- thumbnails
 
@@ -90,8 +178,12 @@ class ImageLoader(QObject):
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
-                if not image.save(cache, "JPG", 85):
+                if image.save(cache, "JPG", 85):
+                    self._note_write()
+                else:
                     log.warning("could not write thumbnail cache %s", cache)
+        else:
+            self._touch(cache)
         self._thumb_done.emit(key[0], key[1], image)
 
     def _on_thumb_done(self, photo_id, aspect_key, image):
