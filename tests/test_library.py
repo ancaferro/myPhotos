@@ -39,6 +39,135 @@ class TestThumbCache:
         assert loader.thumbnail(photo, window.aspect_key) is not None
 
 
+class TestThumbCacheBudget:
+    """The disk cache must stay bounded: keys change with mtime, aspect and
+    crop, so superseded files pile up unless something evicts them."""
+
+    @staticmethod
+    def _write(cache_dir, name, size, last_use):
+        path = cache_dir / name
+        path.write_bytes(b"\0" * size)
+        os.utime(path, (last_use, last_use))
+        return path
+
+    def test_cache_size_and_clear(self, qapp, tmp_path):
+        from gui.thumbs import ImageLoader
+
+        loader = ImageLoader()
+        cache_dir = tmp_path / "thumbs_cache"
+        self._write(cache_dir, "a.jpg", 1000, 1_600_000_000)
+        self._write(cache_dir, "b.jpg", 2000, 1_600_000_000)
+
+        assert loader.cache_size() == 3000
+        assert loader.clear_cache() == 3000
+        assert loader.cache_size() == 0
+        assert list(cache_dir.glob("*.jpg")) == []
+
+    def test_trim_evicts_least_recently_used_first(self, qapp, tmp_path, monkeypatch):
+        import gui.thumbs
+
+        monkeypatch.setattr(gui.thumbs, "MAX_CACHE_BYTES", 2500)
+        loader = gui.thumbs.ImageLoader()
+        cache_dir = tmp_path / "thumbs_cache"
+        oldest = self._write(cache_dir, "oldest.jpg", 1000, 1_600_000_000)
+        middle = self._write(cache_dir, "middle.jpg", 1000, 1_600_001_000)
+        newest = self._write(cache_dir, "newest.jpg", 1000, 1_600_002_000)
+
+        loader._note_write()  # the loader is primed to trim on its first write
+
+        assert loader.cache_size() <= 2500
+        assert not oldest.exists()
+        assert middle.exists() and newest.exists()
+
+    def test_a_cache_hit_refreshes_last_use(self, qapp, tmp_path, monkeypatch):
+        """Re-reading an entry must protect it from the next eviction."""
+        import gui.thumbs
+
+        monkeypatch.setattr(gui.thumbs, "MAX_CACHE_BYTES", 1500)
+        loader = gui.thumbs.ImageLoader()
+        cache_dir = tmp_path / "thumbs_cache"
+        old = self._write(cache_dir, "old.jpg", 1000, 1_600_000_000)
+        new = self._write(cache_dir, "new.jpg", 1000, 1_600_002_000)
+
+        loader._touch(old)  # old.jpg was just served from disk
+        loader._note_write()
+
+        assert old.exists(), "a just-used entry must not be the one evicted"
+        assert not new.exists()
+
+    def test_stale_entries_do_not_grow_without_bound(self, qapp, tmp_path, monkeypatch):
+        """Simulate repeated re-indexing: each round supersedes every key.
+
+        Trimming is batched, so the size settles at the budget plus at most one
+        trim interval's worth of fresh writes — the point is that it settles at
+        all instead of growing with every round.
+        """
+        import gui.thumbs
+
+        monkeypatch.setattr(gui.thumbs, "MAX_CACHE_BYTES", 10_000)
+        monkeypatch.setattr(gui.thumbs, "TRIM_EVERY_WRITES", 5)
+        loader = gui.thumbs.ImageLoader()
+        cache_dir = tmp_path / "thumbs_cache"
+        entry_size, rounds, per_round = 1000, 10, 5
+
+        sizes = []
+        for round_no in range(rounds):
+            for i in range(per_round):
+                self._write(
+                    cache_dir,
+                    f"1-{round_no}-34-{i}.jpg",
+                    entry_size,
+                    1_600_000_000 + round_no * 100 + i,
+                )
+                loader._note_write()
+            sizes.append(loader.cache_size())
+
+        ceiling = 10_000 + per_round * entry_size
+        assert max(sizes) <= ceiling, f"cache exceeded its budget: {sizes}"
+        # Without eviction this would be rounds * per_round * entry_size.
+        assert sizes[-1] < rounds * per_round * entry_size / 2
+        assert sizes[-1] == sizes[len(sizes) // 2], "size must settle, not creep"
+
+
+class TestSettingsCacheRow:
+    def test_dialog_reports_and_clears_the_cache(self, qapp, tmp_path):
+        from gui.settings import SettingsDialog, format_size
+
+        state = {"size": 5 * 1024 * 1024}
+
+        def clear():
+            state["size"] = 0
+
+        dialog = SettingsDialog(
+            {
+                "columns": 4,
+                "aspect": "34",
+                "sort": "name",
+                "watch": False,
+                "greedy_threshold": 0.32,
+                "cluster_threshold": 0.28,
+                "log_level": "WARNING",
+            },
+            cache=(lambda: state["size"], clear),
+        )
+        assert dialog.cache_size.text() == "5 MB"
+        assert dialog.clear_cache_btn.isEnabled()
+
+        dialog.clear_cache_btn.click()
+        assert state["size"] == 0
+        assert dialog.cache_size.text() == "0 KB"
+        assert not dialog.clear_cache_btn.isEnabled()
+        dialog.deleteLater()
+
+    def test_format_size(self):
+        from gui.settings import format_size
+
+        assert format_size(0) == "0 KB"
+        assert format_size(2048) == "2 KB"
+        assert format_size(3 * 1024 * 1024) == "3 MB"
+        assert format_size(2 * 1024**3) == "2.0 GB"
+
+
 class TestCaptureDate:
     def test_read_taken_at_from_exif(self, tmp_path):
         from PIL import Image

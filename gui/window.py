@@ -717,6 +717,7 @@ class MainWindow(QMainWindow):
                 "log_level": logging.getLevelName(logging.getLogger().level),
             },
             self,
+            cache=(self.loader.cache_size, self.loader.clear_cache),
         )
         if dialog.exec() == QDialog.Accepted:
             self.apply_settings(dialog.values())

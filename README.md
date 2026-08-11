@@ -70,7 +70,9 @@ not notarized).
   sort order are toggleable and remembered between launches; a settings
   dialog also covers gallery columns, folder watching, clustering thresholds
   and log verbosity.
-- Thumbnails are cached on disk, so a large library re-opens instantly.
+- Thumbnails are cached on disk, so a large library re-opens instantly. The
+  cache is capped at 512 MB and evicts least-recently-used entries; settings
+  shows its current size and can empty it.
 - The analyzed folder is watched for changes and re-indexed automatically
   (new and removed files; can be turned off in settings).
 - Progress bar while analysis is running.
