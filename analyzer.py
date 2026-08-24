@@ -157,18 +157,16 @@ def _average_linkage(embeddings: np.ndarray, threshold: float) -> list[list[int]
     np.fill_diagonal(sim, -2.0)
     sizes = np.ones(n)
     members = {i: [i] for i in range(n)}
-    active = np.ones(n, dtype=bool)
 
-    while True:
-        idx = np.flatnonzero(active)
-        if len(idx) < 2:
+    # Merged clusters stay at -2.0 in their row and column.
+    # Cosine similarity is always between -1 and 1, so these entries
+    # can never be picked by argmax. We can scan the full matrix
+    # directly instead of rebuilding it with only active clusters.
+    while len(members) >= 2:
+        flat = int(np.argmax(sim))
+        i, j = divmod(flat, n)
+        if sim[i, j] < threshold:
             break
-        sub = sim[np.ix_(idx, idx)]
-        flat = int(np.argmax(sub))
-        i_, j_ = divmod(flat, len(idx))
-        if sub[i_, j_] < threshold:
-            break
-        i, j = int(idx[i_]), int(idx[j_])
 
         merged_row = (sizes[i] * sim[i] + sizes[j] * sim[j]) / (sizes[i] + sizes[j])
         sim[i, :] = merged_row
@@ -178,9 +176,8 @@ def _average_linkage(embeddings: np.ndarray, threshold: float) -> list[list[int]
         sim[:, j] = -2.0
         sizes[i] += sizes[j]
         members[i].extend(members.pop(j))
-        active[j] = False
 
-    return [members[i] for i in np.flatnonzero(active)]
+    return list(members.values())
 
 
 class Analyzer:

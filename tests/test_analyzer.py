@@ -54,6 +54,19 @@ class TestAverageLinkage:
         clusters = _average_linkage(embeddings, threshold=0.3)
         assert len(clusters) == 4
 
+    def test_clusters_partition_every_face(self):
+        # Each face must land in exactly one cluster: merged-away clusters
+        # are gone from the result and nothing is dropped or duplicated.
+        embeddings = np.stack([_unit(16, axis, seed) for axis in range(5) for seed in range(6)])
+        clusters = _average_linkage(embeddings, threshold=0.3)
+        flat = [i for cluster in clusters for i in cluster]
+        assert sorted(flat) == list(range(len(embeddings)))
+
+    def test_result_is_deterministic(self):
+        embeddings = np.stack([_unit(16, axis, seed) for axis in range(4) for seed in range(5)])
+        first = _average_linkage(embeddings, threshold=0.3)
+        second = _average_linkage(embeddings, threshold=0.3)
+        assert [sorted(c) for c in first] == [sorted(c) for c in second]
 
 def _with_similarity(cos):
     """Unit vector whose dot product with the axis-0 unit vector equals cos."""
