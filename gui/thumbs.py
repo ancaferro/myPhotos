@@ -16,6 +16,41 @@ from paths import data_dir
 
 log = logging.getLogger(__name__)
 
+# The on-disk thumbnail cache is bounded: once it grows past this many bytes,
+# the oldest files are evicted so a long-lived library can't fill the disk.
+MAX_CACHE_BYTES = 512 * 1024 * 1024
+
+
+def _evict_cache(cache_dir, max_bytes):
+    """Delete oldest files in cache_dir until the total size fits max_bytes."""
+    try:
+        names = os.listdir(cache_dir)
+    except OSError:
+        return
+    entries = []
+    total = 0
+    for name in names:
+        path = os.path.join(cache_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        entries.append((st.st_mtime, st.st_size, path))
+        total += st.st_size
+    if total <= max_bytes:
+        return
+    entries.sort()  # oldest first
+    for _, size, path in entries:
+        if total <= max_bytes:
+            break
+        try:
+            os.remove(path)
+            total -= size
+        except OSError:
+            pass
+
 
 def _read_image(path):
     reader = QImageReader(path)
@@ -92,6 +127,8 @@ class ImageLoader(QObject):
                 )
                 if not image.save(cache, "JPG", 85):
                     log.warning("could not write thumbnail cache %s", cache)
+                else:
+                    _evict_cache(self._cache_dir, MAX_CACHE_BYTES)
         self._thumb_done.emit(key[0], key[1], image)
 
     def _on_thumb_done(self, photo_id, aspect_key, image):
