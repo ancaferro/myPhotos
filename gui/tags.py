@@ -1,12 +1,13 @@
 """Tags sidebar: colored tag rows with filtering, rename and delete."""
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QScrollArea,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -15,6 +16,9 @@ from PySide6.QtWidgets import (
 from gui.theme import tag_color
 
 DOT = 12
+# The panel hugs its content and sits at the bottom of the sidebar, so it grows
+# upwards as tags are added; past this many rows it starts scrolling instead.
+MAX_VISIBLE_ROWS = 7
 
 
 def _dot_pixmap(color):
@@ -97,7 +101,11 @@ class TagRow(QFrame):
 
 
 class TagsPanel(QWidget):
-    """Scrollable list of TagRow widgets, rebuilt from list_tags() data."""
+    """Tag rows anchored to the bottom of the sidebar.
+
+    The panel asks for exactly the height its rows need, so each new tag
+    pushes the list one row further up; beyond MAX_VISIBLE_ROWS it scrolls.
+    """
 
     tag_clicked = Signal(int)
     rename_requested = Signal(dict)
@@ -111,21 +119,38 @@ class TagsPanel(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        outer.setSpacing(4)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
         inner.setStyleSheet("background: transparent;")
         self._list = QVBoxLayout(inner)
         self._list.setContentsMargins(0, 0, 4, 0)
         self._list.setSpacing(2)
-        self._list.addStretch()
-        scroll.setWidget(inner)
-        outer.addWidget(scroll)
+        self._scroll.setWidget(inner)
+        outer.addWidget(self._scroll)
 
         self.empty = QLabel("No tags yet. Right-click a photo to add one.")
         self.empty.setObjectName("mutedLabel")
         self.empty.setWordWrap(True)
         outer.addWidget(self.empty)
+
+        self._scroll.hide()  # nothing to show until the first tag exists
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+    def sizeHint(self):
+        """Height of the visible rows (capped), or of the empty-state hint."""
+        width = super().sizeHint().width()
+        if not self._rows:
+            return QSize(width, self.empty.sizeHint().height())
+        rows = min(len(self._rows), MAX_VISIBLE_ROWS)
+        row_h = self._rows[0].sizeHint().height()
+        spacing = self._list.spacing()
+        return QSize(width, rows * row_h + (rows - 1) * spacing + 2)
+
+    def minimumSizeHint(self):
+        return QSize(0, 0)
 
     def tags(self):
         return self._tags
@@ -147,7 +172,9 @@ class TagsPanel(QWidget):
             row.clicked.connect(self.tag_clicked)
             row.rename_requested.connect(self.rename_requested)
             row.delete_requested.connect(self.delete_requested)
-            self._list.insertWidget(self._list.count() - 1, row)
+            self._list.addWidget(row)
             self._rows.append(row)
 
         self.empty.setVisible(not tags)
+        self._scroll.setVisible(bool(tags))
+        self.updateGeometry()  # the panel's height follows the row count

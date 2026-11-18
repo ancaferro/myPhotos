@@ -267,7 +267,9 @@ class MainWindow(QMainWindow):
         self.people.rename_requested.connect(self._rename_person)
         self.people.merge_requested.connect(self._merge_person)
         self.people.delete_requested.connect(self._delete_person)
-        side.addWidget(self.people, 2)
+        # People take all the free height; the tags block below hugs its rows,
+        # so it stays pinned to the bottom and grows upwards as tags are added.
+        side.addWidget(self.people, 1)
 
         tags_header = QHBoxLayout()
         tags_title = QLabel("TAGS")
@@ -287,7 +289,7 @@ class MainWindow(QMainWindow):
         self.tags.tag_clicked.connect(self._on_tag_clicked)
         self.tags.rename_requested.connect(self._rename_tag)
         self.tags.delete_requested.connect(self._delete_tag)
-        side.addWidget(self.tags, 1)
+        side.addWidget(self.tags, 0)
         body.addWidget(sidebar)
 
         root.addLayout(body, 1)

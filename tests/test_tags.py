@@ -252,6 +252,46 @@ class TestTagsInGui:
         assert ("Trip", False) in entries
         menu.deleteLater()
 
+    def test_panel_is_pinned_to_the_bottom_and_grows_upwards(self, qapp, window):
+        panel = window.tags
+
+        def top():
+            return panel.mapTo(window, panel.rect().topLeft()).y()
+
+        def bottom():
+            return panel.mapTo(window, panel.rect().bottomLeft()).y()
+
+        assert bottom() > window.people.mapTo(window, window.people.rect().bottomLeft()).y()
+        assert window.height() - bottom() < 40  # sits on the sidebar's bottom margin
+
+        tops = [top()]
+        for name in ("Alpha", "Beta", "Gamma"):
+            data.create_tag(name)
+            window.refresh_all()
+            qapp.processEvents()
+            tops.append(top())
+        assert tops == sorted(tops, reverse=True)  # every new tag pushes it up
+        assert window.height() - bottom() < 40  # while staying anchored below
+
+    def test_panel_stops_growing_and_scrolls_past_the_cap(self, qapp, window):
+        from gui.tags import MAX_VISIBLE_ROWS
+
+        for i in range(MAX_VISIBLE_ROWS):
+            data.create_tag(f"tag{i:02d}")
+        window.refresh_all()
+        qapp.processEvents()
+        capped = window.tags.sizeHint().height()
+
+        for i in range(3):
+            data.create_tag(f"extra{i}")
+        window.refresh_all()
+        qapp.processEvents()
+        assert window.tags.sizeHint().height() == capped
+        # The extra rows exist but live behind the scroll area instead of
+        # pushing the panel any further up.
+        assert len(window.tags._rows) == MAX_VISIBLE_ROWS + 3
+        assert window.tags._scroll.widget().sizeHint().height() > capped
+
     def test_context_menu_offers_location_actions_only_with_coordinates(
         self, qapp, window
     ):
