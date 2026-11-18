@@ -264,8 +264,10 @@ class TestTagsInGui:
         assert bottom() > window.people.mapTo(window, window.people.rect().bottomLeft()).y()
         assert window.height() - bottom() < 40  # sits on the sidebar's bottom margin
 
-        tops = [top()]
-        for name in ("Alpha", "Beta", "Gamma"):
+        # The empty-state hint has its own height, so only compare the row
+        # list once the first tag exists: every new tag pushes the panel up.
+        tops = []
+        for name in ("Alpha", "Beta", "Gamma", "Delta"):
             data.create_tag(name)
             window.refresh_all()
             qapp.processEvents()
