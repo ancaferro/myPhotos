@@ -151,24 +151,28 @@ def _average_linkage(embeddings: np.ndarray, threshold: float) -> list[list[int]
 
     Uses Lance-Williams updates on a full similarity matrix: O(n^2) memory,
     fine for a few thousand faces. Returns a list of index lists.
+
+    Each row keeps a cached best match (``best``/``best_val``) so a merge
+    only touches the rows it actually changes, instead of re-copying the
+    active submatrix and scanning it from scratch every iteration.
     """
     n = len(embeddings)
+    if n == 0:
+        return []
     sim = embeddings @ embeddings.T
     np.fill_diagonal(sim, -2.0)
     sizes = np.ones(n)
     members = {i: [i] for i in range(n)}
     active = np.ones(n, dtype=bool)
 
+    best = sim.argmax(axis=1)
+    best_val = sim[np.arange(n), best]
+
     while True:
-        idx = np.flatnonzero(active)
-        if len(idx) < 2:
+        i = int(best_val.argmax())
+        if best_val[i] < threshold:
             break
-        sub = sim[np.ix_(idx, idx)]
-        flat = int(np.argmax(sub))
-        i_, j_ = divmod(flat, len(idx))
-        if sub[i_, j_] < threshold:
-            break
-        i, j = int(idx[i_]), int(idx[j_])
+        j = int(best[i])
 
         merged_row = (sizes[i] * sim[i] + sizes[j] * sim[j]) / (sizes[i] + sizes[j])
         sim[i, :] = merged_row
@@ -179,6 +183,25 @@ def _average_linkage(embeddings: np.ndarray, threshold: float) -> list[list[int]
         sizes[i] += sizes[j]
         members[i].extend(members.pop(j))
         active[j] = False
+
+        # Row j is gone; row i was rewritten entirely.
+        best_val[j] = -2.0
+        best[i] = sim[i].argmax()
+        best_val[i] = sim[i, best[i]]
+        # Rows whose best match was i or j must be rescanned: that column
+        # either changed value or disappeared.
+        stale = active & ((best == i) | (best == j))
+        stale[i] = False
+        rows = np.flatnonzero(stale)
+        if rows.size:
+            cols = sim[rows].argmax(axis=1)
+            best[rows] = cols
+            best_val[rows] = sim[rows, cols]
+        # For every other active row only column i changed; adopt it if better.
+        improved = active & (sim[:, i] > best_val)
+        improved[i] = False
+        best[improved] = i
+        best_val[improved] = sim[improved, i]
 
     return [members[i] for i in np.flatnonzero(active)]
 

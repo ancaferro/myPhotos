@@ -54,6 +54,45 @@ class TestAverageLinkage:
         clusters = _average_linkage(embeddings, threshold=0.3)
         assert len(clusters) == 4
 
+    def test_empty_input(self):
+        assert _average_linkage(np.zeros((0, 8), dtype=np.float32), threshold=0.3) == []
+
+    def test_single_face(self):
+        assert _average_linkage(_unit(8, 0)[None, :], threshold=0.3) == [[0]]
+
+    def test_matches_naive_average_linkage(self):
+        """The cached best-match bookkeeping must give exactly the same
+        clusters as recomputing every inter-cluster mean from scratch."""
+        rng = np.random.default_rng(7)
+        for trial in range(40):
+            n = int(rng.integers(2, 30))
+            centers = rng.normal(size=(4, 16))
+            emb = centers[rng.integers(0, 4, n)] + rng.normal(scale=0.8, size=(n, 16))
+            emb = (emb / np.linalg.norm(emb, axis=1, keepdims=True)).astype(np.float32)
+            threshold = float(rng.uniform(0.2, 0.9))
+            got = sorted(sorted(c) for c in _average_linkage(emb, threshold))
+            want = sorted(sorted(c) for c in _naive_average_linkage(emb, threshold))
+            assert got == want, (trial, n, threshold)
+
+
+def _naive_average_linkage(embeddings, threshold):
+    """Reference implementation: recompute all inter-cluster means each merge."""
+    sim = embeddings @ embeddings.T
+    clusters = [[i] for i in range(len(embeddings))]
+    while len(clusters) > 1:
+        best_score, best_pair = -2.0, None
+        for a in range(len(clusters)):
+            for b in range(a + 1, len(clusters)):
+                score = float(sim[np.ix_(clusters[a], clusters[b])].mean())
+                if score > best_score:
+                    best_score, best_pair = score, (a, b)
+        if best_score < threshold:
+            break
+        a, b = best_pair
+        clusters[a] = clusters[a] + clusters[b]
+        del clusters[b]
+    return clusters
+
 
 def _with_similarity(cos):
     """Unit vector whose dot product with the axis-0 unit vector equals cos."""
