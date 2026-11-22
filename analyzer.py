@@ -213,6 +213,11 @@ class Analyzer:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._cancel_event = threading.Event()
+        # Cache for _assign_person: person ids plus their stacked mean
+        # embeddings, rebuilt whenever a different `persons` dict arrives.
+        self._match_source: dict | None = None
+        self._match_ids: list[int] = []
+        self._match_means: np.ndarray | None = None
         self.progress: dict[str, object] = {
             "status": "idle",  # idle | running | done | canceled | error
             "total": 0,
@@ -364,6 +369,29 @@ class Analyzer:
                 )
         db.commit()
 
+    def _match_index(
+        self, persons: dict[int, list[np.ndarray]]
+    ) -> tuple[list[int], np.ndarray | None]:
+        """Person ids and their stacked mean embeddings for `persons`.
+
+        The greedy score of a person is the mean of the face's dot products
+        with that person's stored embeddings; the dot product is linear, so
+        the score equals the dot product with the person's *mean* embedding.
+        Stacking the means turns the per-face scan over every person and
+        every stored embedding into one matrix-vector product. The cache is
+        keyed on the dict's identity: a run threads one dict through every
+        call, and _assign_person keeps the matrix in step with its mutations.
+        """
+        if self._match_source is not persons:
+            self._match_ids = list(persons)
+            self._match_means = (
+                np.stack([np.stack(v).mean(axis=0) for v in persons.values()])
+                if persons
+                else None
+            )
+            self._match_source = persons
+        return self._match_ids, self._match_means
+
     def _assign_person(
         self,
         db: sqlite3.Connection,
@@ -374,19 +402,26 @@ class Analyzer:
 
         The final grouping is decided by _recluster() at the end of the run.
         """
-        best_id, best_sim = None, -1.0
-        for person_id, embeddings in persons.items():
-            sim = float(np.mean([np.dot(embedding, e) for e in embeddings]))
-            if sim > best_sim:
-                best_id, best_sim = person_id, sim
+        ids, means = self._match_index(persons)
+        best_id, best_sim, best_row = None, -1.0, -1
+        if means is not None:
+            sims = means @ embedding
+            best_row = int(np.argmax(sims))
+            best_id, best_sim = ids[best_row], float(sims[best_row])
 
         if best_id is not None and best_sim >= GREEDY_THRESHOLD:
-            if len(persons[best_id]) < MAX_EMBEDDINGS_PER_PERSON:
-                persons[best_id].append(embedding)
+            stored = persons[best_id]
+            if len(stored) < MAX_EMBEDDINGS_PER_PERSON:
+                n = len(stored)
+                means[best_row] = (means[best_row] * n + embedding) / (n + 1)
+                stored.append(embedding)
             return best_id
 
         person_id = self._create_person(db)
         persons[person_id] = [embedding]
+        row = np.array(embedding, dtype=np.float32).reshape(1, -1)
+        self._match_means = row if means is None else np.vstack([means, row])
+        self._match_ids.append(person_id)
         return person_id
 
     @staticmethod

@@ -5,6 +5,7 @@ import numpy as np
 import analyzer
 from analyzer import (
     GREEDY_THRESHOLD,
+    MAX_EMBEDDINGS_PER_PERSON,
     Analyzer,
     _average_linkage,
     _normalize,
@@ -149,6 +150,55 @@ class TestAssignPerson:
         for seed in range(1, 6):
             assert a._assign_person(conn, persons, _unit(8, 0, seed)) == first
         assert len(persons[first]) == 3  # capped, membership unchanged
+        conn.close()
+
+
+class TestAssignPersonEquivalence:
+    """The matrix matcher must decide exactly like the loop it replaced."""
+
+    @staticmethod
+    def _reference(persons, embedding, next_id):
+        """The original per-person loop: mean of dot products, first max wins."""
+        best_id, best_sim = None, -1.0
+        for person_id, embeddings in persons.items():
+            sim = float(np.mean([np.dot(embedding, e) for e in embeddings]))
+            if sim > best_sim:
+                best_id, best_sim = person_id, sim
+        if best_id is not None and best_sim >= GREEDY_THRESHOLD:
+            if len(persons[best_id]) < MAX_EMBEDDINGS_PER_PERSON:
+                persons[best_id].append(embedding)
+            return best_id, next_id
+        persons[next_id] = [embedding]
+        return next_id, next_id + 1
+
+    def test_random_stream_matches_reference(self, db):
+        conn = db.get_db()
+        rng = np.random.default_rng(42)
+        dim = 128
+        centers = [
+            _normalize(rng.normal(size=dim).astype(np.float32)) for _ in range(6)
+        ]
+        faces = []
+        for i in range(300):
+            if i % 3:
+                center = centers[rng.integers(len(centers))]
+                vec = center + rng.normal(0, 0.08, dim).astype(np.float32)
+            else:
+                vec = rng.normal(size=dim).astype(np.float32)
+            faces.append(_normalize(vec))
+
+        real, real_persons = Analyzer(), {}
+        ref_persons, next_ref_id = {}, 1
+        ref_of_real = {}
+        for face in faces:
+            ref_id, next_ref_id = self._reference(ref_persons, face, next_ref_id)
+            real_id = real._assign_person(conn, real_persons, face)
+            if real_id not in ref_of_real:
+                ref_of_real[real_id] = ref_id
+            assert ref_of_real[real_id] == ref_id
+        assert {ref_of_real[k]: len(v) for k, v in real_persons.items()} == {
+            k: len(v) for k, v in ref_persons.items()
+        }
         conn.close()
 
 
